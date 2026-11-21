@@ -1,0 +1,9 @@
+options gen2
+require daslib/fio
+
+[export]
+def initialize(project_path : string) {
+    for (path in ["flex_regex", "flex_dfa", "flex", "flex_macro"]) {
+        register_native_path("flex", "{path}", "{project_path}/flex/{path}.das")
+    }
+}

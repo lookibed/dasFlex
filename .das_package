@@ -1,0 +1,22 @@
+options gen2
+
+require daslib/daspkg
+
+[export]
+def package() {
+    package_name("dasFlex")
+    package_author("lookibed")
+    package_description("A lexer generator for daslang: rules as regular expressions, one DFA per start condition set, built at compile time")
+    package_license("MIT")
+    package_tag("parsing")
+    package_min_sdk("0.6")
+}
+
+[export]
+def resolve(sdk_version, version : string) {
+    if (empty(version) || version == "latest") {
+        download_branch("main")
+    } else {
+        download_tag("v{version}")
+    }
+}

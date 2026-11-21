@@ -1,0 +1,93 @@
+# dasFlex architecture
+
+This document follows `ARCHITECTURE_COMMON.md` (a copy sits at this package's root). dasFlex is a
+pure daslang lexer generator: rules written as regular expressions inside a `[flex]` function are
+compiled at compile time into one deterministic automaton per rule set, and the function becomes the
+scanner that drives it. It depends on `daslib/regex` for parsing regex text and on nothing under
+`modules/`.
+
+## File charters
+
+- `flex/flex_regex.das` - the regex tree of `daslib/regex` to a byte NFA (`Nfa`, `FlexRule`,
+  `build_nfa`). Owns the UTF-8 shapes of `.` and the list of regex forms a DFA cannot carry. Never
+  parses regex text itself.
+- `flex/flex_dfa.das` - the NFA to tables (`FlexTables`, `build_tables`, `flex_tables`): byte
+  equivalence classes, subset construction, the rule an accepting state carries. Knows nothing of
+  source code or macros.
+- `flex/flex.das` - the run-time scanner state (`FlexLexer`, `FlexToken`), the actions a rule body
+  calls (`emit`, `begin`, `text`, `text_is`), position tracking (`flex_consume`), the error text
+  (`flex_error_text`) and the table-driven matcher (`flex_match_table`). No regex, no AST.
+- `flex/flex_macro.das` - the `[flex]` function annotation: collects `rule` and `condition` calls,
+  builds the tables through `flex_tables`, stores them as private module globals and rewrites the
+  function body into the scanner loop, in table or goto mode. The only file that touches the AST.
+- `examples/c_lexer/` - the C11 lexer on dasFlex (`c_lexer.das`), its goto-mode twin, a demo and the
+  four-way comparison and timing driver.
+- `tests/` - the package's dastest tests.
+- `tutorials/` - the one-page JSON lexer tutorial.
+
+## One automaton per rule set {#one-automaton}
+
+Every rule of a `[flex]` function joins one NFA: a start state per start condition with an epsilon
+edge to each rule active in it, and the rule's own accepting state tagged with the rule's index.
+Subset construction then yields one DFA whose accepting states carry the lowest rule index among
+the NFA accepting states they hold, so when two rules match the same longest text the one written
+first wins - flex's rule. Running the rules one at a time would cost a pass per rule per token;
+the union automaton reads every byte once.
+
+## Bytes, not code points {#bytes}
+
+The automaton reads UTF-8 bytes. A literal above 127 is its byte sequence, `.` is the set of byte
+shapes a UTF-8 code point other than newline can take (one byte below 128, or a lead byte followed
+by one to three continuation bytes), and a byte set `[...]` is the 256-bit set `daslib/regex`
+parses. The inner loop therefore never decodes; it maps a byte to its class and the class to the
+next state. Columns are byte equivalence classes - the finest partition of 0..255 every edge of the
+NFA is a union of - so the transition table is `nstates x nclasses` (about seventy classes for the
+C lexer) rather than `nstates x 256`.
+
+## Longest match with fall-back {#longest-match}
+
+The matcher runs the DFA from the cursor until no transition exists, remembering the last accepting
+state and its position. The token is that remembered span; the bytes read past it are re-read by
+the next token. An accepting start state (a rule matching the empty string) is refused as an error
+at the cursor rather than accepted, since an empty token would never advance.
+
+## Built at compile time {#compile-time}
+
+The `[flex]` annotation runs in the macro context when the module compiles. It builds the tables
+once and emits them as `to_array_move([...])` initialisers of private module globals named after
+the function, so a program pays nothing for the construction at run time and the generated function
+is ordinary code the interpreter, the JIT and the AOT compiler all see. A failed regex, a form a
+DFA cannot carry (anchors, word boundaries, lookahead, lazy quantifiers) or an unknown start
+condition fails the compile with the rule's text in the message.
+
+## Two scanner shapes {#two-shapes}
+
+`mode="table"` (the default) emits a call to `flex_match_table` with the globals; `mode="goto"`
+emits the DFA as straight-line code - a label per state, a byte read, range tests per class and a
+computed `goto` to the next state - the way re2c and Ragel generate scanners. Both take the same
+rules and produce the same tokens; the choice is a measurement, and the table shape is the default
+because the generated function stays small whatever the rule set.
+
+## Rule bodies run in place {#rule-bodies}
+
+A rule's block is spliced into the generated function under `if (rule == i)`, so it sees the
+function's parameter - the lexer - under the name the user gave it, and anything else the function's
+module makes visible. `emit(lx, kind)` records the token kind and ends the scan; a body that does
+not emit is a skip and the loop continues; `begin(lx, "NAME")` switches the start condition, the
+macro replacing the name with its index at compile time. The matched text is a byte span
+(`tok.start`, `tok.len`) until `text()` is asked for a string.
+
+## The symbol table {#symbols}
+
+`FlexLexer.symbols : table<string; int>` is the one channel from a parser back into the lexer: a
+C parser puts `typedef` names there and the identifier rule reads it to decide between
+`IDENTIFIER` and `TYPEDEF_NAME`. It is a field of the lexer, not a global, so two lexers never share
+it by accident.
+
+## Not carried by this version {#not-carried}
+
+- Capture groups: a rule body sees the whole match only. Flex has no submatch either; when needed,
+  tagged DFA (re2c's TDFA) is the shape that keeps one pass.
+- Trailing context (`r/s`) and anchors.
+- Unicode classes such as `[а-я]`: the set syntax of `daslib/regex` is byte-wise, so a class over
+  code points above 127 is written as an alternation of literals.
