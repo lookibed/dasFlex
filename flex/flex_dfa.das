@@ -103,8 +103,8 @@ def build_tables(n : Nfa) : FlexTables {
         t.accept |> push(acc)
         for (cls in range(t.nclasses)) {
             let b = rep[cls]
-            var moved : array<int>
-            var seen : table<int>
+            var inscope moved : array<int>
+            var inscope seen : table<int>
             for (s in sets[si]) {
                 for (e in n.edges[s]) {
                     if (b >= e.lo && b <= e.hi && !(seen |> key_exists(e.to))) {

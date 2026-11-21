@@ -15,7 +15,6 @@ require daslib/regex
 require daslib/fio
 require daslib/strings_boost
 require strings
-require math
 
 struct Tok {
     kind : int
@@ -27,10 +26,10 @@ def is_ident_start(c : int) : bool => is_alpha(c) || c == '_'
 def is_ident_char(c : int) : bool => is_alpha(c) || is_number(c) || c == '_'
 
 //! the probe's hand-written lexer: raw tokens, no filter (keywords by table, typedef names by `typedefs`)
-def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {
+def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // nolint:STYLE037,STYLE038 - the probe's lexer kept whole, as the reference
     var out : array<Tok>
     var line = 1
-    peek_data(text) $(d) {
+    peek_data(text) $(d) {  // nolint:STYLE037 - see the function
         let n = length(d)
         var i = 0
         while (i < n) {
@@ -85,7 +84,8 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {
             }
             if (is_number(c) || (c == '.' && i + 1 < n && is_number(int(d[i + 1])))) {
                 var is_float = c == '.'
-                let is_hex = c == '0' && start + 1 < n && (int(d[start + 1]) == 'x' || int(d[start + 1]) == 'X')
+                let is_hex = c == '0' && start + 1 < n && (int(d[start + 1]) == 'x'
+                                                           || int(d[start + 1]) == 'X')
                 while (i < n) {
                     let ch = int(d[i])
                     if (is_ident_char(ch) || ch == '.') {
@@ -93,7 +93,8 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {
                         i++
                     } elif ((ch == '+' || ch == '-') && i > start) {
                         let prev = int(d[i - 1])
-                        let exp_sign = (!is_hex && (prev == 'e' || prev == 'E')) || (is_hex && (prev == 'p' || prev == 'P'))
+                        let exp_sign = (!is_hex && (prev == 'e' || prev == 'E')) || (is_hex
+                            && (prev == 'p' || prev == 'P'))
                         break if (!exp_sign)
                         i++
                     } else {
@@ -101,10 +102,14 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {
                     }
                 }
                 let word = slice(d, start, i)
-                out |> emplace(Tok(kind = int(is_float ? CTok.F_CONSTANT : CTok.I_CONSTANT), text = word, line = line))
+                out |> emplace(
+                               Tok(kind = int(is_float ? CTok.F_CONSTANT : CTok.I_CONSTANT),
+                                   text = word, line = line))
                 continue
             }
-            if (c == '"' || c == '\'' || ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))) {
+            if (c == '"' || c == '\''
+                || ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n
+                    && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))) {
                 if (c != '"' && c != '\'') {
                     i++
                 }
@@ -117,7 +122,9 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {
                     i++
                 }
                 i++
-                out |> emplace(Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT), text = slice(d, start, i), line = line))
+                out |> emplace(
+                               Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
+                                   text = slice(d, start, i), line = line))
                 continue
             }
             if (i + 2 < n) {
@@ -189,20 +196,24 @@ struct ReRule {
 
 def regex_rules() : array<ReRule> {
     var rs : array<ReRule>
+    rs |> reserve(64)
     // no `X+Y?` shapes: daslib/regex returns the shortest X there (see the package report), so each
-    // optional suffix is a rule of its own
+    // optional suffix is a rule of its own; alternatives are ordered longest first, since `|` takes the
+    // first alternative that matches, not the longest
     let names <- [["[ \t\v\f\r\n]+", "-1"],
                   ["#[^\n]*", "-1"],
                   ["//[^\n]*", "-1"],
                   ["/\\*", "-4"],
                   ["[a-zA-Z_][a-zA-Z_0-9]*", "-2"],
                   ["0[xX][a-fA-F0-9]+", "{int(CTok.I_CONSTANT)}"],
-                  ["0[xX][a-fA-F0-9]+(u|U|l|L|ll|LL|ul|uL|Ul|UL|lu|lU|Lu|LU|llu|llU|LLu|LLU|ull|uLL|Ull|ULL)", "{int(CTok.I_CONSTANT)}"],
+                  ["0[xX][a-fA-F0-9]+(ull|uLL|Ull|ULL|llu|llU|LLu|LLU|ul|uL|Ul|UL|lu|lU|Lu|LU|ll|LL|u|U|l|L)", "{int(CTok.I_CONSTANT)}"],
                   ["[1-9][0-9]*", "{int(CTok.I_CONSTANT)}"],
-                  ["[1-9][0-9]*(u|U|l|L|ll|LL|ul|uL|Ul|UL|lu|lU|Lu|LU|llu|llU|LLu|LLU|ull|uLL|Ull|ULL)", "{int(CTok.I_CONSTANT)}"],
+                  ["[1-9][0-9]*(ull|uLL|Ull|ULL|llu|llU|LLu|LLU|ul|uL|Ul|UL|lu|lU|Lu|LU|ll|LL|u|U|l|L)", "{int(CTok.I_CONSTANT)}"],
                   ["0[0-7]*", "{int(CTok.I_CONSTANT)}"],
-                  ["0[0-7]*(u|U|l|L|ll|LL|ul|uL|Ul|UL|lu|lU|Lu|LU|llu|llU|LLu|LLU|ull|uLL|Ull|ULL)", "{int(CTok.I_CONSTANT)}"],
-                  ["(u|U|L)?'([^'\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'", "{int(CTok.I_CONSTANT)}"],
+                  ["0[0-7]*(ull|uLL|Ull|ULL|llu|llU|LLu|LLU|ul|uL|Ul|UL|lu|lU|Lu|LU|ll|LL|u|U|l|L)",
+                   "{int(CTok.I_CONSTANT)}"],
+                  ["(u|U|L)?'([^'\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'",
+                   "{int(CTok.I_CONSTANT)}"],
                   ["[0-9]+([Ee][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
                   ["[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
                   ["[0-9]*\\.[0-9]+", "{int(CTok.F_CONSTANT)}"],
@@ -216,10 +227,12 @@ def regex_rules() : array<ReRule> {
                   ["0[xX][a-fA-F0-9]+([Pp][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]*\\.[a-fA-F0-9]+([Pp][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
-                  ["0[xX][a-fA-F0-9]*\\.[a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
+                  ["0[xX][a-fA-F0-9]*\\.[a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)",
+                   "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
-                  ["(u8|u|U|L)?\"([^\"\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"", "{int(CTok.STRING_LITERAL)}"],
+                  ["(u8|u|U|L)?\"([^\"\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"",
+                   "{int(CTok.STRING_LITERAL)}"],
                   ["\\.\\.\\.", "{int(CTok.ELLIPSIS)}"],
                   [">>=", "{int(CTok.RIGHT_ASSIGN)}"],
                   ["<<=", "{int(CTok.LEFT_ASSIGN)}"],
@@ -242,7 +255,8 @@ def regex_rules() : array<ReRule> {
                   [">=", "{int(CTok.GE_OP)}"],
                   ["==", "{int(CTok.EQ_OP)}"],
                   ["!=", "{int(CTok.NE_OP)}"],
-                  [";|\\\{|\\\}|,|:|=|\\(|\\)|\\[|\\]|\\.|&|!|~|-|\\+|\\*|/|%|<|>|\\^|\\||\\?", "-3"]]
+                  [";|\\\{|\\\}|,|:|=|\\(|\\)|\\[|\\]|\\.|&|!|~|-|\\+|\\*|/|%|<|>|\\^|\\||\\?",
+                   "-3"]]
     for (nk in names) {
         var r : ReRule
         if (!regex_compile(r.re, nk[0])) {
@@ -254,59 +268,63 @@ def regex_rules() : array<ReRule> {
     return <- rs
 }
 
-def lex_regex(text : string; typedefs : table<string; int>; var rules : array<ReRule>; var comment_end : Regex) : array<Tok> {
+def lex_regex(text : string; typedefs : table<string; int>;
+              var rules : array<ReRule>) : array<Tok> {
     var out : array<Tok>
     var pos = 0
-    let n = length(text)
     var line = 1
-    while (pos < n) {
-        var best = -1
-        var best_end = -1
-        for (ri, r in count(), rules) {
-            let e = regex_match(r.re, text, pos)
-            if (e > best_end) {
-                best_end = e
-                best = ri
+    peek_data(text) $(d) {
+        let n = length(d)
+        while (pos < n) {
+            var best = -1
+            var best_end = -1
+            for (ri, r in count(), rules) {
+                let e = regex_match(r.re, text, pos)
+                if (e > best_end) {
+                    best_end = e
+                    best = ri
+                }
             }
-        }
-        if (best < 0 || best_end <= pos) {
-            print("regex lexer: no rule at {pos} line {line}\n")
-            break
-        }
-        let word = slice(text, pos, best_end)
-        for (ch in word) {
-            if (ch == '\n') {
-                line++
+            if (best < 0 || best_end <= pos) {
+                print("regex lexer: no rule at {pos} line {line}\n")
+                break
             }
-        }
-        let kind = rules[best].kind
-        if (kind == -4) {
-            // comment: find the closing */ from here
-            var p = best_end
-            while (p + 1 < n && !(character_at(text, p) == '*' && character_at(text, p + 1) == '/')) {
-                if (character_at(text, p) == '\n') {
+            for (p in range(pos, best_end)) {
+                if (int(d[p]) == '\n') {
                     line++
                 }
-                p++
             }
-            pos = p + 2
-            continue
+            let kind = rules[best].kind
+            if (kind == -4) {
+                // a comment: skip to the closing */
+                var p = best_end
+                while (p + 1 < n && !(int(d[p]) == '*' && int(d[p + 1]) == '/')) {
+                    if (int(d[p]) == '\n') {
+                        line++
+                    }
+                    p++
+                }
+                pos = p + 2
+                continue
+            }
+            let start = pos
+            pos = best_end
+            continue if (kind == -1)
+            var k = kind
+            if (kind == -2) {
+                let word = slice(d, start, best_end)
+                k = int(CTok.IDENTIFIER)
+                KEYWORDS |> get(word) $(kk) {
+                    k = int(kk)
+                }
+                if (k == int(CTok.IDENTIFIER) && typedefs |> key_exists(word)) {
+                    k = int(CTok.TYPEDEF_NAME)
+                }
+            } elif (kind == -3) {
+                k = int(d[start])
+            }
+            out |> emplace(Tok(kind = k, text = slice(d, start, best_end), line = line))
         }
-        pos = best_end
-        continue if (kind == -1)
-        var k = kind
-        if (kind == -2) {
-            k = int(CTok.IDENTIFIER)
-            KEYWORDS |> get(word) $(kk) {
-                k = int(kk)
-            }
-            if (k == int(CTok.IDENTIFIER) && typedefs |> key_exists(word)) {
-                k = int(CTok.TYPEDEF_NAME)
-            }
-        } elif (kind == -3) {
-            k = character_at(word, 0)
-        }
-        out |> emplace(Tok(kind = k, text = word, line = line))
     }
     return <- out
 }
@@ -323,7 +341,9 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
     var candidates : array<string>
     while (i < n) {
         let t = raw[i]
-        if (t.kind == int(CTok.IDENTIFIER) && (t.text == "__attribute__" || t.text == "__asm__" || t.text == "__asm" || t.text == "__typeof__")) {
+        if (t.kind == int(CTok.IDENTIFIER)
+            && (t.text == "__attribute__" || t.text == "__asm__" || t.text == "__asm"
+                || t.text == "__typeof__")) {
             i++
             while (i < n && raw[i].kind != '(') {
                 i++
@@ -343,11 +363,14 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
             }
             continue
         }
-        if (t.kind == int(CTok.IDENTIFIER) && (t.text == "__extension__" || t.text == "__inline" || t.text == "__inline__" || t.text == "__restrict" || t.text == "__restrict__")) {
+        if (t.kind == int(CTok.IDENTIFIER)
+            && (t.text == "__extension__" || t.text == "__inline" || t.text == "__inline__"
+                || t.text == "__restrict" || t.text == "__restrict__")) {
             i++
             continue
         }
-        if (t.kind == int(CTok.STRING_LITERAL) && length(out) > 0 && out[length(out) - 1].kind == int(CTok.STRING_LITERAL)) {
+        if (t.kind == int(CTok.STRING_LITERAL) && !empty(out)
+            && out[length(out) - 1].kind == int(CTok.STRING_LITERAL)) {
             out[length(out) - 1].text += " " + t.text
             i++
             continue
@@ -359,7 +382,7 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
         } elif (t.kind == int(CTok.IDENTIFIER) && in_typedef) {
             if (depth == 0) {
                 candidates |> push(t.text)
-            } elif (depth == 1 && i + 1 < n && raw[i + 1].kind != '(' && length(candidates) == 0) {
+            } elif (depth == 1 && i + 1 < n && raw[i + 1].kind != '(' && empty(candidates)) {
                 candidates |> push(t.text)
             }
         }
@@ -369,7 +392,7 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
             depth--
         }
         if (in_typedef && depth == 0 && (t.kind == ';' || t.kind == ',')) {
-            if (length(candidates) > 0) {
+            if (!empty(candidates)) {
                 typedefs[candidates[length(candidates) - 1]] = 1
             }
             candidates |> clear()
@@ -385,7 +408,7 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
 
 def read_file(path : string) : string {
     var text = ""
-    fopen(path, "rb") <| $(f) {
+    fopen(path, "rb") $(f) {
         if (f != null) {
             text = fread(f)
         }
@@ -393,7 +416,8 @@ def read_file(path : string) : string {
     return text
 }
 
-def lex_mode(mode : string; text : string; typedefs : table<string; int>; var rules : array<ReRule>; var cend : Regex) : array<Tok> {
+def lex_mode(mode : string; text : string; typedefs : table<string; int>;
+             var rules : array<ReRule>) : array<Tok> {
     if (mode == "flex") {
         return <- lex_flex(text, typedefs, false)
     } elif (mode == "goto") {
@@ -401,7 +425,7 @@ def lex_mode(mode : string; text : string; typedefs : table<string; int>; var ru
     } elif (mode == "probe") {
         return <- lex_probe(text, typedefs)
     } else {
-        return <- lex_regex(text, typedefs, rules, cend)
+        return <- lex_regex(text, typedefs, rules)
     }
 }
 
@@ -432,8 +456,6 @@ def main() {
         i++
     }
     var rules <- regex_rules()
-    var cend : Regex
-    regex_compile(cend, "\\*/")
     for (path in files) {
         let text = read_file(path)
         if (empty(text)) {
@@ -442,13 +464,13 @@ def main() {
         }
         // two lexing passes: the first learns the typedef names the second needs (the C grammar's
         // lexer hack), so every mode sees the same table
-        var typedefs : table<string; int>
+        var inscope typedefs : table<string; int>
         typedefs["__builtin_va_list"] = 1
-        var raw <- lex_mode(mode, text, typedefs, rules, cend)
-        var toks <- filter_tokens(raw, typedefs)
-        raw <- lex_mode(mode, text, typedefs, rules, cend)
-        var seed := typedefs
-        toks <- filter_tokens(raw, seed)
+        var inscope first_raw <- lex_mode(mode, text, typedefs, rules)
+        var inscope first_toks <- filter_tokens(first_raw, typedefs)
+        var inscope raw <- lex_mode(mode, text, typedefs, rules)
+        var inscope seed := typedefs
+        var inscope toks <- filter_tokens(raw, seed)
         if (dump) {
             for (t in toks) {
                 print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\n")
@@ -457,10 +479,10 @@ def main() {
             print("{path}: {mode}: {length(toks)} tokens, {length(seed)} typedefs\n")
         }
         if (passes > 0) {
-            var times : array<double>
-            for (k in range(passes)) {
+            var inscope times : array<double>
+            for (_k in range(passes)) {
                 let t0 = ref_time_ticks()
-                var r <- lex_mode(mode, text, typedefs, rules, cend)
+                var inscope r <- lex_mode(mode, text, typedefs, rules)
                 times |> push(double(get_time_usec(t0)) / 1000.0lf)
             }
             sort(times)

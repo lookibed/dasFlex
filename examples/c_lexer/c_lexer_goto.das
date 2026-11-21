@@ -9,7 +9,7 @@ require flex/flex_macro public
 require c_lexer
 
 [flex(mode="goto")]
-def c_next_goto(var lx : FlexLexer) : bool {
+def c_next_goto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
     rule("[ \\t\\v\\f\\r\\n]+") {
     }
     rule("#[^\\n]*") {

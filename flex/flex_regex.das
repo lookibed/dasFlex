@@ -169,7 +169,7 @@ def frag_of(var n : Nfa; node : ReNode?) : Frag {
         return Frag(first = a, last = a)
     }
     if (node.op == ReOp.Char) {
-        return frag_text(n, string(node.text))
+        return frag_text(n, node.text)
     } elif (node.op == ReOp.Set) {
         return frag_set(n, node.cset)
     } elif (node.op == ReOp.Any) {
@@ -181,12 +181,10 @@ def frag_of(var n : Nfa; node : ReNode?) : Frag {
         let y = frag_of(n, node.right)
         return frag_concat(n, x, y)
     } elif (node.op == ReOp.Union) {
-        var parts : array<Frag>
-        for (sub in node.all) {
-            parts |> push(frag_of(n, sub))
-        }
+        let parts <- [for (sub in node.all); frag_of(n, sub)]
         return frag_union(n, parts)
-    } elif (node.op == ReOp.Star || node.op == ReOp.Plus || node.op == ReOp.Question || node.op == ReOp.Repeat) {
+    } elif (node.op == ReOp.Star || node.op == ReOp.Plus || node.op == ReOp.Question
+            || node.op == ReOp.Repeat) {
         if (node.lazy) {
             refuse(n, "a lazy quantifier", node)
         }
@@ -208,7 +206,7 @@ def frag_of(var n : Nfa; node : ReNode?) : Frag {
 def frag_repeat(var n : Nfa; sub : ReNode?; min_rep, max_rep : int) : Frag {
     let a = new_state(n)
     var cur = Frag(first = a, last = a)
-    for (i in range(min_rep)) {
+    for (_i in range(min_rep)) {
         let x = frag_of(n, sub)
         cur = frag_concat(n, cur, x)
     }
@@ -216,7 +214,7 @@ def frag_repeat(var n : Nfa; sub : ReNode?; min_rep, max_rep : int) : Frag {
         let x = frag_of(n, sub)
         cur = frag_concat(n, cur, frag_star(n, x))
     } else {
-        for (i in range(max_rep - min_rep)) {
+        for (_i in range(max_rep - min_rep)) {
             let x = frag_of(n, sub)
             cur = frag_concat(n, cur, frag_optional(n, x))
         }

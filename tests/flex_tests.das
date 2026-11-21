@@ -174,7 +174,6 @@ def test_start_conditions(t : T?) {
         var lx : FlexLexer
         flex_open(lx, "ab <cd 12> 34", "t.txt")
         var kinds : array<int>
-        var ok = true
         while (with_inclusive(lx)) {
             kinds |> push(lx.tok.kind)
         }

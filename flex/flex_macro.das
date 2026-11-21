@@ -8,7 +8,6 @@ module flex_macro shared public
 
 require daslib/ast_boost
 require daslib/templates_boost
-require daslib/strings_boost
 require daslib/defer
 require math
 
@@ -29,6 +28,7 @@ struct private FlexArm {
 }
 
 struct private FlexSpec {
+    func_name : string
     rules : array<FlexRule>
     arms : array<FlexArm>
     cond_names : array<string>
@@ -41,7 +41,8 @@ class private BeginRewrite : AstVisitor {
     cond_names : array<string>
     err : string
     def override visitExprCall(var expr : ExprCall?) : ExpressionPtr {
-        if (expr.name == "begin" && length(expr.arguments) == 2 && expr.arguments[1] is ExprConstString) {
+        if (expr.name == "begin" && length(expr.arguments) == 2
+            && expr.arguments[1] is ExprConstString) {
             let cname = string((expr.arguments[1] as ExprConstString).value)
             var idx = -1
             for (i, n in count(), cond_names) {
@@ -61,8 +62,10 @@ class private BeginRewrite : AstVisitor {
     }
 }
 
-def private collect_rule(var spec : FlexSpec; call : ExprCall?; conds : array<int>; var rw : BeginRewrite?) {
-    if (length(call.arguments) != 2 || !(call.arguments[0] is ExprConstString) || !(call.arguments[1] is ExprMakeBlock)) {
+def private collect_rule(var spec : FlexSpec; call : ExprCall?; conds : array<int>;
+                         var rw : BeginRewrite?) {
+    if (length(call.arguments) != 2 || !(call.arguments[0] is ExprConstString)
+        || !(call.arguments[1] is ExprMakeBlock)) {
         spec.err = "rule(\"regex\") \{ ... \} expected"
         return
     }
@@ -97,7 +100,8 @@ def private collect_conditions(var spec : FlexSpec; body : ExprBlock?) {
     for (st in body.list) {
         if (st is ExprCall && (st as ExprCall).name == "condition") {
             let call = st as ExprCall
-            if (length(call.arguments) != 3 || !(call.arguments[0] is ExprConstString) || !(call.arguments[1] is ExprVar) || !(call.arguments[2] is ExprMakeBlock)) {
+            if (length(call.arguments) != 3 || !(call.arguments[0] is ExprConstString)
+                || !(call.arguments[1] is ExprVar) || !(call.arguments[2] is ExprMakeBlock)) {
                 spec.err = "condition(\"NAME\", exclusive|inclusive) \{ rules \} expected"
                 return
             }
@@ -114,7 +118,7 @@ def private collect_conditions(var spec : FlexSpec; body : ExprBlock?) {
 
 def private collect_rules(var spec : FlexSpec; body : ExprBlock?) {
     var rw = new BeginRewrite(cond_names := spec.cond_names)
-    defer <| $() {
+    defer() {
         unsafe {
             delete rw
         }
@@ -138,7 +142,7 @@ def private collect_rules(var spec : FlexSpec; body : ExprBlock?) {
             collect_rule(spec, call, top_conds, rw)
         } elif (call.name == "condition") {
             cond_no++
-            var own : array<int>
+            var inscope own : array<int>
             own |> push(cond_no)
             let cblk = call.arguments[2] |> unquote_block
             for (cs in cblk.list) {
@@ -156,7 +160,20 @@ def private collect_rules(var spec : FlexSpec; body : ExprBlock?) {
     }
 }
 
-def private int_table_global(name : string; vals : array<int>; at : LineInfo; var errors : das_string) : bool {
+//! the control flow the macro emits is marked generated, so a complexity lint counts the user's rule
+//! bodies and not the scanner skeleton; a block from `qmacro_block` is walked one level down
+def private mark_generated(var e : ExpressionPtr) {
+    if (e is ExprBlock) {
+        for (st in (e as ExprBlock).list) {
+            mark_generated(st)
+        }
+    } elif (e is ExprIfThenElse || e is ExprWhile || e is ExprFor) {
+        e.genFlags.generated = true
+    }
+}
+
+def private int_table_global(name : string; vals : array<int>; at : LineInfo;
+                             var errors : das_string) : bool {
     var mkArr = new ExprMakeArray(at = at, makeType <- typeinfo ast_typedecl(type<int>))
     for (v in vals) {
         mkArr.values |> emplace_new <| new ExprConstInt(at = at, value = v)
@@ -174,23 +191,28 @@ def private int_table_global(name : string; vals : array<int>; at : LineInfo; va
 //! `if (rule == i) { body }` per rule, the dispatch after a match
 def private make_arms(spec : FlexSpec; rule_var : string) : array<ExpressionPtr> {
     var arms : array<ExpressionPtr>
+    arms |> reserve(length(spec.arms))
     for (arm in spec.arms) {
-        var body : array<ExpressionPtr>
-        for (s in arm.body) {
-            body |> push(clone_expression(s))
-        }
-        arms |> push <| qmacro_block() {
+        var wrapper = qmacro_block() {
             if ($i(rule_var) == $v(arm.rule)) {
-                $b(body)
             }
         }
+        mark_generated(wrapper)
+        var ifte = (wrapper as ExprBlock).list[0] as ExprIfThenElse
+        var then_blk = ifte.if_true as ExprBlock
+        for (s in arm.body) {
+            then_blk.list |> push(clone_expression(s))
+        }
+        arms |> push(wrapper)
     }
     return <- arms
 }
 
 //! the DFA as straight-line code: `label s:` reads a byte, picks the next state by class ranges, jumps
-def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string; t_at : LineInfo) : array<ExpressionPtr> {
+def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
+                              t_at : LineInfo) : array<ExpressionPtr> {
     var out : array<ExpressionPtr>
+    out |> reserve(t.nstates * 3 + 2)
     let done = t.nstates
     // class -> representative byte ranges, to test bytes directly instead of through class_of
     var lo_of, hi_of : array<int>
@@ -207,8 +229,10 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string; 
     out |> push <| qmacro_block() {
         goto $i(cond_start)
     }
+    var moves : array<ExpressionPtr>
+    moves |> reserve(t.nclasses)
     for (s in range(t.nstates)) {
-        var moves : array<ExpressionPtr>
+        moves |> clear()
         for (c in range(t.nclasses)) {
             let nx = t.next[s * t.nclasses + c]
             continue if (nx < 0)
@@ -222,7 +246,7 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string; 
                 }
             } else {
                 moves |> push <| qmacro_block() {
-                    if (flex`b >= $v(lo) && flex`b <= $v(hi)) {
+                    if (flex`b >= $v(lo) && flex`b <= $v(hi)) {  // nolint:PERF014,LINT019 - any byte range, not digits
                         goto $v(nx)
                     }
                 }
@@ -249,12 +273,78 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string; 
     }
     var lab_done : ExpressionPtr = new ExprLabel(at = t_at, labelName = done)
     out |> emplace(lab_done)
+    for (e in out) {
+        mark_generated(e)
+    }
     return <- out
+}
+
+//! the generated function body: match (by tables or by straight-line code), consume, dispatch on the rule
+def private make_scanner_body(spec : FlexSpec; t : FlexTables; lx, mode : string;
+                              at : LineInfo) : ExpressionPtr {
+    let g_next = "{spec.func_name}`flex`next"
+    let g_accept = "{spec.func_name}`flex`accept"
+    let g_class = "{spec.func_name}`flex`class"
+    let g_start = "{spec.func_name}`flex`start"
+    var arms <- make_arms(spec, "flex`rule")
+    let nclasses = t.nclasses
+    var newBody : ExpressionPtr
+    if (mode == "table") {
+        newBody = qmacro_block() {
+            while (true) {
+                return false if ($i(lx).pos >= $i(lx).len)
+                var flex`len = 0
+                let flex`rule = flex_match_table($i(lx), $i(g_next), $i(g_accept), $i(g_class),
+                                                 $v(nclasses),
+                                                  $i(g_start)[$i(lx).cond], flex`len)
+                if (flex`rule < 0 || flex`len == 0) {
+                    $i(lx).failed = true
+                    $i(lx).err = flex_error_text($i(lx))
+                    return false
+                }
+                flex_consume($i(lx), $i(lx).pos, flex`len)
+                $i(lx).emitted = false
+                $b(arms)
+                return true if ($i(lx).emitted)
+            }
+        }
+    } else {
+        var matcher <- make_goto_matcher(t, lx, "flex`start", at)
+        newBody = qmacro_block() {
+            while (true) {
+                return false if ($i(lx).pos >= $i(lx).len)
+                var flex`len = 0
+                var flex`rule = -1
+                var flex`i = $i(lx).pos
+                var flex`b = 0
+                let flex`start = $i(g_start)[$i(lx).cond]
+                $b(matcher)
+                if (flex`rule < 0 || flex`len == 0) {
+                    $i(lx).failed = true
+                    $i(lx).err = flex_error_text($i(lx))
+                    return false
+                }
+                flex_consume($i(lx), $i(lx).pos, flex`len)
+                $i(lx).emitted = false
+                $b(arms)
+                return true if ($i(lx).emitted)
+            }
+        }
+    }
+    // the loop and its guards are generated; the user's rule bodies inside the arms are not
+    var top = (newBody as ExprBlock).list[0]
+    top.genFlags.generated = true
+    var loop_body = (top as ExprWhile).body as ExprBlock
+    for (st in loop_body.list) {
+        mark_generated(st)
+    }
+    return newBody
 }
 
 [function_macro(name="flex")]
 class FlexMacro : AstFunctionAnnotation {
-    def override apply(var func : FunctionPtr; var group : ModuleGroup; var args : AnnotationArgumentList; var errors : das_string) : bool {
+    def override apply(var func : FunctionPtr; var group : ModuleGroup;
+                       var args : AnnotationArgumentList; var errors : das_string) : bool {
         if (length(func.arguments) != 1) {
             errors := "[flex] takes one argument: var lx : FlexLexer"
             return false
@@ -270,6 +360,7 @@ class FlexMacro : AstFunctionAnnotation {
             return false
         }
         var spec : FlexSpec
+        spec.func_name = string(func.name)
         var body = func.body as ExprBlock
         collect_conditions(spec, body)
         if (empty(spec.err)) {
@@ -294,55 +385,11 @@ class FlexMacro : AstFunctionAnnotation {
         let g_start = "{func.name}`flex`start"
         return false if (!int_table_global(g_start, t.start, func.at, errors))
         if (mode == "table") {
-            return false if (!int_table_global(g_next, t.next, func.at, errors))
-            return false if (!int_table_global(g_accept, t.accept, func.at, errors))
-            return false if (!int_table_global(g_class, t.class_of, func.at, errors))
+            return false if (!int_table_global(g_next, t.next, func.at, errors)
+                || !int_table_global(g_accept, t.accept, func.at, errors)
+                || !int_table_global(g_class, t.class_of, func.at, errors))
         }
-        var arms <- make_arms(spec, "flex`rule")
-        let nclasses = t.nclasses
-        var newBody : ExpressionPtr
-        if (mode == "table") {
-            newBody = qmacro_block() {
-                while (true) {
-                    return false if ($i(lx).pos >= $i(lx).len)
-                    var flex`len = 0
-                    let flex`rule = flex_match_table($i(lx), $i(g_next), $i(g_accept), $i(g_class), $v(nclasses),
-                                                      $i(g_start)[$i(lx).cond], flex`len)
-                    if (flex`rule < 0 || flex`len == 0) {
-                        $i(lx).failed = true
-                        $i(lx).err = flex_error_text($i(lx))
-                        return false
-                    }
-                    flex_consume($i(lx), $i(lx).pos, flex`len)
-                    $i(lx).emitted = false
-                    $b(arms)
-                    return true if ($i(lx).emitted)
-                }
-            }
-        } else {
-            var matcher <- make_goto_matcher(t, lx, "flex`start", func.at)
-            newBody = qmacro_block() {
-                while (true) {
-                    return false if ($i(lx).pos >= $i(lx).len)
-                    var flex`len = 0
-                    var flex`rule = -1
-                    var flex`i = $i(lx).pos
-                    var flex`b = 0
-                    let flex`start = $i(g_start)[$i(lx).cond]
-                    $b(matcher)
-                    if (flex`rule < 0 || flex`len == 0) {
-                        $i(lx).failed = true
-                        $i(lx).err = flex_error_text($i(lx))
-                        return false
-                    }
-                    flex_consume($i(lx), $i(lx).pos, flex`len)
-                    $i(lx).emitted = false
-                    $b(arms)
-                    return true if ($i(lx).emitted)
-                }
-            }
-        }
-        func.body = newBody
+        func.body = make_scanner_body(spec, t, lx, mode, func.at)
         return true
     }
 }

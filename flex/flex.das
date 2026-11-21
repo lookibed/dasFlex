@@ -65,17 +65,14 @@ def begin(var lx : FlexLexer; cond : int) {
 }
 
 //! The matched text as a fresh string.
-def text(lx : FlexLexer) : string {
-    return slice(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
-}
+def text(lx : FlexLexer) : string => slice(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
 
 //! A length-bounded comparison of the matched text with `s`, no allocation.
 def text_is(lx : FlexLexer; s : string) : bool {
     return false if (length(s) != lx.tok.len)
     unsafe {
-        let a = reinterpret<void?>(lx.data + lx.tok.start)
-        let b = reinterpret<void?>(s)
-        return memcmp(a, b, lx.tok.len) == 0
+        return memcmp(reinterpret<void?>(lx.data + lx.tok.start), reinterpret<void?>(s),
+                      lx.tok.len) == 0
     }
 }
 
@@ -85,7 +82,7 @@ def flex_error_text(lx : FlexLexer) : string {
     var shown = "end of input"
     if (lx.pos < lx.len) {
         let b = int(unsafe(lx.data[lx.pos]))
-        var seq_len = b < 128 ? 1 : (b >= 194 && b <= 223 ? 2 : (b >= 224 && b <= 239 ? 3 : (b >= 240 && b <= 244 ? 4 : 0)))
+        let seq_len = b < 128 ? 1 : (b >= 194 && b <= 223 ? 2 : (b >= 224 && b <= 239 ? 3 : (b >= 240 && b <= 244 ? 4 : 0)))
         if (seq_len == 0 || lx.pos + seq_len > lx.len) {
             shown = "byte {b}"
         } elif (b < 32 || b == 127) {
@@ -126,19 +123,17 @@ def flex_match_table(lx : FlexLexer; next, accept, class_of : array<int>; nclass
     var best_len = 0
     var i = lx.pos
     let n = lx.len
-    unsafe {
-        while (i < n) {
-            let cls = class_of[int(lx.data[i])]
-            state = next[state * nclasses + cls]
-            if (state < 0) {
-                break
-            }
-            i++
-            let acc = accept[state]
-            if (acc >= 0) {
-                best_rule = acc
-                best_len = i - lx.pos
-            }
+    while (i < n) {
+        let cls = class_of[int(unsafe(lx.data[i]))]
+        state = next[state * nclasses + cls]
+        if (state < 0) {
+            break
+        }
+        i++
+        let acc = accept[state]
+        if (acc >= 0) {
+            best_rule = acc
+            best_len = i - lx.pos
         }
     }
     if (best_rule < 0 && accept[start_state] >= 0) {

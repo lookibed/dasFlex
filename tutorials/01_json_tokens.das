@@ -86,7 +86,8 @@ def json_lexer(var lx : FlexLexer) : bool {
 }
 
 def kind_name(kind : int) : string {
-    let names <- ["", "LBRACE", "RBRACE", "LBRACKET", "RBRACKET", "COLON", "COMMA", "STRING", "NUMBER", "TRUE", "FALSE", "NULL"]
+    let names <- ["", "LBRACE", "RBRACE", "LBRACKET", "RBRACKET", "COLON", "COMMA", "STRING",
+                  "NUMBER", "TRUE", "FALSE", "NULL"]
     return names[kind]
 }
 
