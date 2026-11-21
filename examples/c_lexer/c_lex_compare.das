@@ -26,7 +26,7 @@ def is_ident_start(c : int) : bool => is_alpha(c) || c == '_'
 def is_ident_char(c : int) : bool => is_alpha(c) || is_number(c) || c == '_'
 
 //! the probe's hand-written lexer: raw tokens, no filter (keywords by table, typedef names by `typedefs`)
-def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // nolint:STYLE037,STYLE038 - the probe's lexer kept whole, as the reference
+def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // nolint:STYLE038 - the probe's lexer kept whole, as the reference
     var out : array<Tok>
     var line = 1
     peek_data(text) $(d) {  // nolint:STYLE037 - see the function
