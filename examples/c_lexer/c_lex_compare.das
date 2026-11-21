@@ -480,6 +480,7 @@ def main() {
         }
         if (passes > 0) {
             var inscope times : array<double>
+            times |> reserve(passes)
             for (_k in range(passes)) {
                 let t0 = ref_time_ticks()
                 var inscope r <- lex_mode(mode, text, typedefs, rules)
