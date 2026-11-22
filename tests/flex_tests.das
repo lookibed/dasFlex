@@ -39,7 +39,7 @@ def mini(var lx : FlexLexer) : bool {
     rule("(а|б|в|г|д|е|ж|з|и|й|к|л|м|н|о|п|р|с|т|у|ф|х|ц|ч|ш|щ|ъ|ы|ь|э|ю|я)+") {
         lx |> emit(TTok.WORD_RU)
     }
-    rule("[+*/=;()\{\}-]") {
+    rule("[+*/=;()\{\}\\-]") {
         lx |> emit(TTok.PUNCT)
     }
     condition("COMMENT", exclusive) {
@@ -69,7 +69,37 @@ def mini_goto(var lx : FlexLexer) : bool {
     rule("/\\*") {
         lx |> begin("COMMENT")
     }
-    rule("[+*/=;()\{\}-]") {
+    rule("[+*/=;()\{\}\\-]") {
+        lx |> emit(TTok.PUNCT)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(dispatch = "goto", matcher = "inline")]
+def mini_inline(var lx : FlexLexer) : bool {
+    rule("if") {
+        lx |> emit(TTok.IF)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        lx |> emit(TTok.IDENT)
+    }
+    rule("[0-9]+") {
+        lx |> emit(TTok.NUM)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
         lx |> emit(TTok.PUNCT)
     }
     condition("COMMENT", exclusive) {
@@ -224,6 +254,27 @@ def test_goto_mode_equivalence(t : T?) {
     while (mini_goto(lx)) {
     }
     t |> equal(lx.err, "t.txt:1:3: unexpected '§'")
+}
+
+[test(description = "the inline matcher with goto dispatch gives the same tokens, lines and columns as the table one")]
+def test_inline_matcher_equivalence(t : T?) {
+    let src = "if (x1 == 42) /* c\n * / */ y =\tiff;\n\n  z-1 /* a\nb\nc */ w"
+    var a, b : FlexLexer
+    flex_open(a, src, "t.txt")
+    flex_open(b, src, "t.txt")
+    var ka, kb : array<string>
+    while (mini(a)) {
+        ka |> push("{a.tok.kind}@{a.tok.line}:{a.tok.col}:{text(a)}")
+    }
+    while (mini_inline(b)) {
+        kb |> push("{b.tok.kind}@{b.tok.line}:{b.tok.col}:{text(b)}")
+    }
+    t |> equal(kb, ka)
+    t |> equal(ka[length(ka) - 1], "2@6:6:w")
+    flex_open(b, "a\n §", "t.txt")
+    while (mini_inline(b)) {
+    }
+    t |> equal(b.err, "t.txt:2:2: unexpected '§'")
 }
 
 [test(description = "text() returns the matched bytes and text_is compares without allocating")]

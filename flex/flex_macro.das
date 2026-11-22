@@ -43,11 +43,9 @@ class private BeginRewrite : AstVisitor {
     err : string
     def override visitExprCall(var expr : ExprCall?) : ExpressionPtr {
         if (expr.name == "emit" && length(expr.arguments) == 2) {
-            var lx_ref = clone_expression(expr.arguments[0])
-            var kind = clone_expression(expr.arguments[1])
             var inlined = qmacro_block() {
-                $e(lx_ref).tok.kind = int($e(kind))
-                $e(lx_ref).emitted = true
+                $e(expr.arguments[0]).tok.kind = int($e(expr.arguments[1]))  // nolint:PERF020,LINT019 - an enum or an int kind
+                $e(expr.arguments[0]).emitted = true
             }
             mark_generated(inlined)
             return inlined
@@ -344,60 +342,136 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
     return <- out
 }
 
-//! the generated function body: match (by tables or by straight-line code), consume, dispatch on the rule
-def private make_scanner_body(spec : FlexSpec; t : FlexTables; lx, mode, dispatch : string;
-                              at : LineInfo) : ExpressionPtr {
-    let g_next = "{spec.func_name}`flex`next"
-    let g_accept = "{spec.func_name}`flex`accept"
-    let g_class = "{spec.func_name}`flex`class"
-    let g_start = "{spec.func_name}`flex`start"
-    let base = mode == "goto" ? t.nstates + 1 : 0
-    var arms <- make_arms(spec, "flex`rule", dispatch, base, at)
-    let nclasses = t.nclasses
-    var newBody : ExpressionPtr
-    if (mode == "table") {
-        newBody = qmacro_block() {
-            while (true) {
-                return false if ($i(lx).pos >= $i(lx).len)
-                var flex`len = 0
-                let flex`rule = flex_match_table($i(lx), $i(g_next), $i(g_accept), $i(g_class),
-                                                 $v(nclasses),
-                                                  $i(g_start)[$i(lx).cond], flex`len)
-                if (flex`rule < 0 || flex`len == 0) {
-                    $i(lx).failed = true
-                    $i(lx).err = flex_error_text($i(lx))
-                    return false
+//! one table in place of `next` and `accept`: `next * 256 + accept(next) + 1`, `-1` for no move
+def private merged_table(t : FlexTables) : array<int> {
+    var m : array<int>
+    m |> resize(length(t.next))
+    for (i, nx in count(), t.next) {
+        m[i] = nx < 0 ? -1 : nx * 256 + t.accept[nx] + 1
+    }
+    return <- m
+}
+
+//! the inline matcher: the byte loop in the scanner's own module over one merged table and raw
+//! pointers, newlines counted on the way (`\n` is a class of its own, one compare per byte)
+def private make_inline_matcher(lx, g_merged, g_class, g_start : string;
+                                nclasses, nl_class : int) : array<ExpressionPtr> {
+    return <- qmacro_block_to_array() {
+        unsafe {
+            let flex`data = $i(lx).data
+            let flex`tbl = addr($i(g_merged)[0])
+            let flex`cls = addr($i(g_class)[0])
+            var flex`state = $i(g_start)[$i(lx).cond]
+            var flex`i = $i(lx).pos
+            let flex`n = $i(lx).len
+            var flex`nl_run = 0
+            var flex`nl_run_last = 0
+            while (flex`i < flex`n) {
+                let flex`c = flex`cls[int(flex`data[flex`i])]
+                let flex`e = flex`tbl[flex`state * $v(nclasses) + flex`c]
+                break if (flex`e < 0)
+                flex`i++
+                if (flex`c == $v(nl_class)) {
+                    flex`nl_run++
+                    flex`nl_run_last = flex`i
                 }
-                flex_consume($i(lx), $i(lx).pos, flex`len)
-                $i(lx).emitted = false
-                $b(arms)
-                return true if ($i(lx).emitted)
-            }
-        }
-    } else {
-        var matcher <- make_goto_matcher(t, lx, "flex`start", at)
-        newBody = qmacro_block() {
-            while (true) {
-                return false if ($i(lx).pos >= $i(lx).len)
-                var flex`len = 0
-                var flex`rule = -1
-                var flex`i = $i(lx).pos
-                var flex`b = 0
-                let flex`start = $i(g_start)[$i(lx).cond]
-                $b(matcher)
-                if (flex`rule < 0 || flex`len == 0) {
-                    $i(lx).failed = true
-                    $i(lx).err = flex_error_text($i(lx))
-                    return false
+                flex`state = flex`e >> 8
+                let flex`acc = (flex`e & 255) - 1
+                if (flex`acc >= 0) {
+                    flex`rule = flex`acc
+                    flex`len = flex`i - $i(lx).pos
+                    flex`nl = flex`nl_run
+                    flex`nl_last = flex`nl_run_last
                 }
-                flex_consume($i(lx), $i(lx).pos, flex`len)
-                $i(lx).emitted = false
-                $b(arms)
-                return true if ($i(lx).emitted)
             }
         }
     }
-    // the loop and its guards are generated; the user's rule bodies inside the arms are not
+}
+
+//! the token is the matched span; line and column move by the newlines the matcher counted on the way
+//! (`nl` of them, the last one ending at `nl_last`), so no byte of the token is read twice
+def private make_token_set(lx : string) : array<ExpressionPtr> {
+    return <- qmacro_block_to_array() {
+        $i(lx).tok.start = $i(lx).pos
+        $i(lx).tok.len = flex`len
+        $i(lx).tok.text = ""
+        $i(lx).tok.line = $i(lx).line
+        $i(lx).tok.col = $i(lx).col
+        if (flex`nl > 0) {
+            $i(lx).line += flex`nl
+            $i(lx).col = $i(lx).pos + flex`len - flex`nl_last + 1
+        } else {
+            $i(lx).col += flex`len
+        }
+        $i(lx).pos += flex`len
+    }
+}
+
+//! the match in one of three shapes: the inline byte loop, a call to `flex_match_table`, or the DFA
+//! as labelled straight-line code; each leaves the rule and the length in `rule` and `len`
+def private make_match(spec : FlexSpec; t : FlexTables; lx, mode, matcher : string;
+                       at : LineInfo) : array<ExpressionPtr> {
+    let g_class = "{spec.func_name}`flex`class"
+    let g_start = "{spec.func_name}`flex`start"
+    if (mode == "table" && matcher == "inline") {
+        return <- make_inline_matcher(lx, "{spec.func_name}`flex`merged", g_class, g_start,
+                                      t.nclasses, t.class_of[10])
+    } elif (mode == "table") {
+        let g_next = "{spec.func_name}`flex`next"
+        let g_accept = "{spec.func_name}`flex`accept"
+        let nclasses = t.nclasses
+        return <- qmacro_block_to_array() {
+            flex`rule = flex_match_table($i(lx), $i(g_next), $i(g_accept), $i(g_class),
+                                         $v(nclasses),
+                                         $i(g_start)[$i(lx).cond], flex`len)
+        }
+    }
+    var states <- make_goto_matcher(t, lx, "flex`start", at)
+    return <- qmacro_block_to_array() {
+        var flex`i = $i(lx).pos
+        var flex`b = 0
+        let flex`start = $i(g_start)[$i(lx).cond]
+        $b(states)
+    }
+}
+
+//! taking the matched span as the token: from the newlines the matcher counted, or by `flex_consume`
+def private make_take(lx, mode, matcher : string) : array<ExpressionPtr> {
+    if (mode == "table" && matcher == "inline") {
+        return <- make_token_set(lx)
+    }
+    return <- qmacro_block_to_array() {
+        flex_consume($i(lx), $i(lx).pos, flex`len)
+    }
+}
+
+//! the generated function body: match, take the token, dispatch on the rule; the loop and its guards
+//! are generated, the user's rule bodies inside the arms are not
+def private make_scanner_body(spec : FlexSpec; t : FlexTables; lx, mode, dispatch, matcher : string;
+                              at : LineInfo) : ExpressionPtr {
+    let base = mode == "goto" ? t.nstates + 1 : 0
+    var arms <- make_arms(spec, "flex`rule", dispatch, base, at)
+    var match <- make_match(spec, t, lx, mode, matcher, at)
+    var take <- make_take(lx, mode, matcher)
+    var newBody = qmacro_block() {
+        while (true) {
+            return false if ($i(lx).pos >= $i(lx).len)
+            var flex`len = 0
+            var flex`rule = -1
+            var flex`nl = 0
+            var flex`nl_last = 0
+            $b(match)
+            if (flex`rule < 0 || flex`len == 0) {
+                $i(lx).failed = true
+                $i(lx).err = flex_error_text($i(lx))
+                return false
+            }
+            $b(take)
+            $i(lx).emitted = false
+            $b(arms)
+            return true if ($i(lx).emitted)
+        }
+    }
     var top = (newBody as ExprBlock).list[0]
     top.genFlags.generated = true
     var loop_body = (top as ExprWhile).body as ExprBlock
@@ -434,6 +508,15 @@ class FlexMacro : AstFunctionAnnotation {
             errors := "[flex] dispatch is if, goto or tree, not {dispatch}"
             return false
         }
+        var matcher = "call"
+        let argMatcher = find_arg(args, "matcher")
+        if (argMatcher is tString) {
+            matcher = argMatcher as tString
+        }
+        if (matcher != "call" && matcher != "inline") {
+            errors := "[flex] matcher is call or inline, not {matcher}"
+            return false
+        }
         var spec : FlexSpec
         spec.func_name = string(func.name)
         var body = func.body as ExprBlock
@@ -449,6 +532,10 @@ class FlexMacro : AstFunctionAnnotation {
             errors := "[flex] body has no rules"
             return false
         }
+        if (matcher == "inline" && length(spec.rules) > 254) {
+            errors := "[flex] matcher = inline carries at most 254 rules in its merged table"
+            return false
+        }
         let t <- flex_tables(spec.rules, length(spec.cond_names))
         if (!empty(t.err)) {
             errors := t.err
@@ -458,13 +545,17 @@ class FlexMacro : AstFunctionAnnotation {
         let g_accept = "{func.name}`flex`accept"
         let g_class = "{func.name}`flex`class"
         let g_start = "{func.name}`flex`start"
+        let g_merged = "{func.name}`flex`merged"
         return false if (!int_table_global(g_start, t.start, func.at, errors))
-        if (mode == "table") {
+        if (mode == "table" && matcher == "inline") {
+            return false if (!int_table_global(g_merged, merged_table(t), func.at, errors)
+                || !int_table_global(g_class, t.class_of, func.at, errors))
+        } elif (mode == "table") {
             return false if (!int_table_global(g_next, t.next, func.at, errors)
                 || !int_table_global(g_accept, t.accept, func.at, errors)
                 || !int_table_global(g_class, t.class_of, func.at, errors))
         }
-        func.body = make_scanner_body(spec, t, lx, mode, dispatch, func.at)
+        func.body = make_scanner_body(spec, t, lx, mode, dispatch, matcher, func.at)
         return true
     }
 }

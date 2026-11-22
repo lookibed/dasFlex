@@ -41,8 +41,9 @@ shapes a UTF-8 code point other than newline can take (one byte below 128, or a 
 by one to three continuation bytes), and a byte set `[...]` is the 256-bit set `daslib/regex`
 parses. The inner loop therefore never decodes; it maps a byte to its class and the class to the
 next state. Columns are byte equivalence classes - the finest partition of 0..255 every edge of the
-NFA is a union of - so the transition table is `nstates x nclasses` (about seventy classes for the
-C lexer) rather than `nstates x 256`.
+NFA is a union of, with byte 10 always alone in its class so a scanner counts lines by the class it
+reads - so the transition table is `nstates x nclasses` (about seventy classes for the C lexer)
+rather than `nstates x 256`.
 
 ## Longest match with fall-back {#longest-match}
 

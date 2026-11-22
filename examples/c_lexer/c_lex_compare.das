@@ -7,7 +7,7 @@ options indenting = 4
 // the shared filter (GNU extension skipping, adjacent string literals joined, typedef tracking)
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
 //
-//   daslang -load_module <dasFlex> bench/c_lex_compare.das -- --mode flex|goto|flex-dgoto|flex-dtree|goto-dgoto|probe|regex (--dump | --time N) files...
+//   daslang -load_module <dasFlex> bench/c_lex_compare.das -- --mode flex|goto|flex-dgoto|flex-dtree|flex-inline|goto-dgoto|probe|regex (--dump | --time N) files...
 
 require c_lexer
 require c_lexer_goto
@@ -184,6 +184,10 @@ def lex_flex(text : string; typedefs : table<string; int>; shape : string) : arr
         }
     } elif (shape == "flex-dtree") {
         while (c_next_dtree(lx)) {
+            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+        }
+    } elif (shape == "flex-inline") {
+        while (c_next_inline(lx)) {
             out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
         }
     } elif (shape == "goto-dgoto") {

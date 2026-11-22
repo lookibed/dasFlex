@@ -23,12 +23,14 @@ struct FlexTables {
     err : string
 }
 
-//! the finest partition of the byte alphabet every edge is a union of
+//! the finest partition of the byte alphabet every edge is a union of; `\n` is a class of its own
 def byte_classes(n : Nfa; var class_of : array<int>) : int {
     var cut : array<bool>
     cut |> resize(257)
     cut[0] = true
     cut[256] = true
+    cut[10] = true
+    cut[11] = true
     for (es in n.edges) {
         for (e in es) {
             cut[e.lo] = true
