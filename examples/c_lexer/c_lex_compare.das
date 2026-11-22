@@ -7,10 +7,11 @@ options indenting = 4
 // the shared filter (GNU extension skipping, adjacent string literals joined, typedef tracking)
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
 //
-//   daslang -load_module <dasFlex> bench/c_lex_compare.das -- --mode flex|goto|probe|regex (--dump | --time N) files...
+//   daslang -load_module <dasFlex> bench/c_lex_compare.das -- --mode flex|goto|flex-dgoto|flex-dtree|goto-dgoto|probe|regex (--dump | --time N) files...
 
 require c_lexer
 require c_lexer_goto
+require c_lexer_variants
 require daslib/regex
 require daslib/fio
 require daslib/strings_boost
@@ -167,14 +168,26 @@ let PUNCT2 <- {
     "!=" => CTok.NE_OP
 }
 
-//! the dasFlex lexer, either mode: raw tokens
-def lex_flex(text : string; typedefs : table<string; int>; use_goto : bool) : array<Tok> {
+//! the dasFlex lexer in one of its generated shapes: raw tokens
+def lex_flex(text : string; typedefs : table<string; int>; shape : string) : array<Tok> {
     var out : array<Tok>
     var lx : FlexLexer
     lx.symbols := typedefs
     flex_open(lx, text)
-    if (use_goto) {
+    if (shape == "goto") {
         while (c_next_goto(lx)) {
+            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+        }
+    } elif (shape == "flex-dgoto") {
+        while (c_next_dgoto(lx)) {
+            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+        }
+    } elif (shape == "flex-dtree") {
+        while (c_next_dtree(lx)) {
+            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+        }
+    } elif (shape == "goto-dgoto") {
+        while (c_next_goto_dgoto(lx)) {
             out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
         }
     } else {
@@ -418,14 +431,12 @@ def read_file(path : string) : string {
 
 def lex_mode(mode : string; text : string; typedefs : table<string; int>;
              var rules : array<ReRule>) : array<Tok> {
-    if (mode == "flex") {
-        return <- lex_flex(text, typedefs, false)
-    } elif (mode == "goto") {
-        return <- lex_flex(text, typedefs, true)
-    } elif (mode == "probe") {
+    if (mode == "probe") {
         return <- lex_probe(text, typedefs)
-    } else {
+    } elif (mode == "regex") {
         return <- lex_regex(text, typedefs, rules)
+    } else {
+        return <- lex_flex(text, typedefs, mode)
     }
 }
 

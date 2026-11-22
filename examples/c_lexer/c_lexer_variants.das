@@ -1,0 +1,392 @@
+options gen2
+options indenting = 4
+
+module c_lexer_variants shared public
+
+// The example's C11 rules under every dispatch shape, for the measurement only: table mode with a
+// computed goto and with a binary tree over the rule number, and goto mode with the computed goto.
+
+require flex/flex_macro public
+require c_lexer
+
+[flex(dispatch = "goto")]
+def c_next_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
+    rule("[ \\t\\v\\f\\r\\n]+") {
+    }
+    rule("#[^\\n]*") {
+    }
+    rule("//[^\\n]*") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[1-9][0-9]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("[0-9]*\\.[0-9]+([Ee][+-]?[0-9]+)?(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("[0-9]+\\.([Ee][+-]?[0-9]+)?(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]*\\.[a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+        lx |> emit(CTok.STRING_LITERAL)
+    }
+    rule("\\.\\.\\.") {
+        lx |> emit(CTok.ELLIPSIS)
+    }
+    rule(">>=") {
+        lx |> emit(CTok.RIGHT_ASSIGN)
+    }
+    rule("<<=") {
+        lx |> emit(CTok.LEFT_ASSIGN)
+    }
+    rule("\\+=") {
+        lx |> emit(CTok.ADD_ASSIGN)
+    }
+    rule("-=") {
+        lx |> emit(CTok.SUB_ASSIGN)
+    }
+    rule("\\*=") {
+        lx |> emit(CTok.MUL_ASSIGN)
+    }
+    rule("/=") {
+        lx |> emit(CTok.DIV_ASSIGN)
+    }
+    rule("%=") {
+        lx |> emit(CTok.MOD_ASSIGN)
+    }
+    rule("&=") {
+        lx |> emit(CTok.AND_ASSIGN)
+    }
+    rule("\\^=") {
+        lx |> emit(CTok.XOR_ASSIGN)
+    }
+    rule("\\|=") {
+        lx |> emit(CTok.OR_ASSIGN)
+    }
+    rule(">>") {
+        lx |> emit(CTok.RIGHT_OP)
+    }
+    rule("<<") {
+        lx |> emit(CTok.LEFT_OP)
+    }
+    rule("\\+\\+") {
+        lx |> emit(CTok.INC_OP)
+    }
+    rule("--") {
+        lx |> emit(CTok.DEC_OP)
+    }
+    rule("->") {
+        lx |> emit(CTok.PTR_OP)
+    }
+    rule("&&") {
+        lx |> emit(CTok.AND_OP)
+    }
+    rule("\\|\\|") {
+        lx |> emit(CTok.OR_OP)
+    }
+    rule("<=") {
+        lx |> emit(CTok.LE_OP)
+    }
+    rule(">=") {
+        lx |> emit(CTok.GE_OP)
+    }
+    rule("==") {
+        lx |> emit(CTok.EQ_OP)
+    }
+    rule("!=") {
+        lx |> emit(CTok.NE_OP)
+    }
+    rule(";|\\\{|\\\}|,|:|=|\\(|\\)|\\[|\\]|\\.|&|!|~|-|\\+|\\*|/|%|<|>|\\^|\\||\\?") {
+        lx |> emit(c_byte_kind(lx))
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(dispatch = "tree")]
+def c_next_dtree(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
+    rule("[ \\t\\v\\f\\r\\n]+") {
+    }
+    rule("#[^\\n]*") {
+    }
+    rule("//[^\\n]*") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[1-9][0-9]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("[0-9]*\\.[0-9]+([Ee][+-]?[0-9]+)?(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("[0-9]+\\.([Ee][+-]?[0-9]+)?(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]*\\.[a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+        lx |> emit(CTok.STRING_LITERAL)
+    }
+    rule("\\.\\.\\.") {
+        lx |> emit(CTok.ELLIPSIS)
+    }
+    rule(">>=") {
+        lx |> emit(CTok.RIGHT_ASSIGN)
+    }
+    rule("<<=") {
+        lx |> emit(CTok.LEFT_ASSIGN)
+    }
+    rule("\\+=") {
+        lx |> emit(CTok.ADD_ASSIGN)
+    }
+    rule("-=") {
+        lx |> emit(CTok.SUB_ASSIGN)
+    }
+    rule("\\*=") {
+        lx |> emit(CTok.MUL_ASSIGN)
+    }
+    rule("/=") {
+        lx |> emit(CTok.DIV_ASSIGN)
+    }
+    rule("%=") {
+        lx |> emit(CTok.MOD_ASSIGN)
+    }
+    rule("&=") {
+        lx |> emit(CTok.AND_ASSIGN)
+    }
+    rule("\\^=") {
+        lx |> emit(CTok.XOR_ASSIGN)
+    }
+    rule("\\|=") {
+        lx |> emit(CTok.OR_ASSIGN)
+    }
+    rule(">>") {
+        lx |> emit(CTok.RIGHT_OP)
+    }
+    rule("<<") {
+        lx |> emit(CTok.LEFT_OP)
+    }
+    rule("\\+\\+") {
+        lx |> emit(CTok.INC_OP)
+    }
+    rule("--") {
+        lx |> emit(CTok.DEC_OP)
+    }
+    rule("->") {
+        lx |> emit(CTok.PTR_OP)
+    }
+    rule("&&") {
+        lx |> emit(CTok.AND_OP)
+    }
+    rule("\\|\\|") {
+        lx |> emit(CTok.OR_OP)
+    }
+    rule("<=") {
+        lx |> emit(CTok.LE_OP)
+    }
+    rule(">=") {
+        lx |> emit(CTok.GE_OP)
+    }
+    rule("==") {
+        lx |> emit(CTok.EQ_OP)
+    }
+    rule("!=") {
+        lx |> emit(CTok.NE_OP)
+    }
+    rule(";|\\\{|\\\}|,|:|=|\\(|\\)|\\[|\\]|\\.|&|!|~|-|\\+|\\*|/|%|<|>|\\^|\\||\\?") {
+        lx |> emit(c_byte_kind(lx))
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(mode = "goto", dispatch = "goto")]
+def c_next_goto_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
+    rule("[ \\t\\v\\f\\r\\n]+") {
+    }
+    rule("#[^\\n]*") {
+    }
+    rule("//[^\\n]*") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[1-9][0-9]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("[0-9]*\\.[0-9]+([Ee][+-]?[0-9]+)?(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("[0-9]+\\.([Ee][+-]?[0-9]+)?(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]*\\.[a-fA-F0-9]+([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+        lx |> emit(CTok.STRING_LITERAL)
+    }
+    rule("\\.\\.\\.") {
+        lx |> emit(CTok.ELLIPSIS)
+    }
+    rule(">>=") {
+        lx |> emit(CTok.RIGHT_ASSIGN)
+    }
+    rule("<<=") {
+        lx |> emit(CTok.LEFT_ASSIGN)
+    }
+    rule("\\+=") {
+        lx |> emit(CTok.ADD_ASSIGN)
+    }
+    rule("-=") {
+        lx |> emit(CTok.SUB_ASSIGN)
+    }
+    rule("\\*=") {
+        lx |> emit(CTok.MUL_ASSIGN)
+    }
+    rule("/=") {
+        lx |> emit(CTok.DIV_ASSIGN)
+    }
+    rule("%=") {
+        lx |> emit(CTok.MOD_ASSIGN)
+    }
+    rule("&=") {
+        lx |> emit(CTok.AND_ASSIGN)
+    }
+    rule("\\^=") {
+        lx |> emit(CTok.XOR_ASSIGN)
+    }
+    rule("\\|=") {
+        lx |> emit(CTok.OR_ASSIGN)
+    }
+    rule(">>") {
+        lx |> emit(CTok.RIGHT_OP)
+    }
+    rule("<<") {
+        lx |> emit(CTok.LEFT_OP)
+    }
+    rule("\\+\\+") {
+        lx |> emit(CTok.INC_OP)
+    }
+    rule("--") {
+        lx |> emit(CTok.DEC_OP)
+    }
+    rule("->") {
+        lx |> emit(CTok.PTR_OP)
+    }
+    rule("&&") {
+        lx |> emit(CTok.AND_OP)
+    }
+    rule("\\|\\|") {
+        lx |> emit(CTok.OR_OP)
+    }
+    rule("<=") {
+        lx |> emit(CTok.LE_OP)
+    }
+    rule(">=") {
+        lx |> emit(CTok.GE_OP)
+    }
+    rule("==") {
+        lx |> emit(CTok.EQ_OP)
+    }
+    rule("!=") {
+        lx |> emit(CTok.NE_OP)
+    }
+    rule(";|\\\{|\\\}|,|:|=|\\(|\\)|\\[|\\]|\\.|&|!|~|-|\\+|\\*|/|%|<|>|\\^|\\||\\?") {
+        lx |> emit(c_byte_kind(lx))
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+

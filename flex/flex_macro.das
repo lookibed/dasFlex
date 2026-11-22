@@ -188,24 +188,78 @@ def private int_table_global(name : string; vals : array<int>; at : LineInfo;
     return true
 }
 
-//! `if (rule == i) { body }` per rule, the dispatch after a match
-def private make_arms(spec : FlexSpec; rule_var : string) : array<ExpressionPtr> {
+//! the dispatch after a match, in one of three shapes: a chain of `if (rule == i)`, a computed
+//! `goto` into a label per rule (labels `base .. base + nrules`), or a binary tree of `if (rule < m)`
+def private make_arms(spec : FlexSpec; rule_var, dispatch : string; base : int;
+                      at : LineInfo) : array<ExpressionPtr> {
     var arms : array<ExpressionPtr>
-    arms |> reserve(length(spec.arms))
-    for (arm in spec.arms) {
-        var wrapper = qmacro_block() {
-            if ($i(rule_var) == $v(arm.rule)) {
+    if (dispatch == "goto") {
+        arms |> reserve(length(spec.arms) * 3 + 2)
+        arms |> push <| qmacro_block() {
+            goto $i(rule_var) + $v(base)
+        }
+        let done = base + length(spec.arms)
+        for (arm in spec.arms) {
+            var lab : ExpressionPtr = new ExprLabel(at = at, labelName = base + arm.rule)
+            arms |> emplace(lab)
+            for (s in arm.body) {
+                arms |> push(clone_expression(s))
             }
+            var jump : ExpressionPtr = new ExprGoto(at = at, labelName = done)
+            arms |> emplace(jump)
         }
-        mark_generated(wrapper)
-        var ifte = (wrapper as ExprBlock).list[0] as ExprIfThenElse
-        var then_blk = ifte.if_true as ExprBlock
-        for (s in arm.body) {
-            then_blk.list |> push(clone_expression(s))
+        var lab_done : ExpressionPtr = new ExprLabel(at = at, labelName = done)
+        arms |> emplace(lab_done)
+        for (e in arms) {
+            mark_generated(e)
         }
-        arms |> push(wrapper)
+    } elif (dispatch == "tree") {
+        arms |> push(make_arm_tree(spec, rule_var, 0, length(spec.arms)))
+    } else {
+        arms |> reserve(length(spec.arms))
+        for (arm in spec.arms) {
+            arms |> push(make_arm_if(spec, rule_var, arm.rule))
+        }
     }
     return <- arms
+}
+
+def private make_arm_if(spec : FlexSpec; rule_var : string; rule : int) : ExpressionPtr {
+    var wrapper = qmacro_block() {
+        if ($i(rule_var) == $v(rule)) {
+        }
+    }
+    mark_generated(wrapper)
+    var ifte = (wrapper as ExprBlock).list[0] as ExprIfThenElse
+    var then_blk = ifte.if_true as ExprBlock
+    for (s in spec.arms[rule].body) {
+        then_blk.list |> push(clone_expression(s))
+    }
+    return wrapper
+}
+
+//! rules `lo .. hi-1` as a balanced tree of `if (rule < mid)`; a leaf is the rule's body
+def private make_arm_tree(spec : FlexSpec; rule_var : string; lo, hi : int) : ExpressionPtr {
+    if (hi - lo == 1) {
+        var leaf = qmacro_block() {
+        }
+        var blk = leaf as ExprBlock
+        for (s in spec.arms[lo].body) {
+            blk.list |> push(clone_expression(s))
+        }
+        return leaf
+    }
+    let mid = (lo + hi) / 2
+    var node = qmacro_block() {
+        if ($i(rule_var) < $v(mid)) {
+        } else {
+        }
+    }
+    mark_generated(node)
+    var ifte = (node as ExprBlock).list[0] as ExprIfThenElse
+    (ifte.if_true as ExprBlock).list |> push(make_arm_tree(spec, rule_var, lo, mid))
+    (ifte.if_false as ExprBlock).list |> push(make_arm_tree(spec, rule_var, mid, hi))
+    return node
 }
 
 //! the DFA as straight-line code: `label s:` reads a byte, picks the next state by class ranges, jumps
@@ -280,13 +334,14 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
 }
 
 //! the generated function body: match (by tables or by straight-line code), consume, dispatch on the rule
-def private make_scanner_body(spec : FlexSpec; t : FlexTables; lx, mode : string;
+def private make_scanner_body(spec : FlexSpec; t : FlexTables; lx, mode, dispatch : string;
                               at : LineInfo) : ExpressionPtr {
     let g_next = "{spec.func_name}`flex`next"
     let g_accept = "{spec.func_name}`flex`accept"
     let g_class = "{spec.func_name}`flex`class"
     let g_start = "{spec.func_name}`flex`start"
-    var arms <- make_arms(spec, "flex`rule")
+    let base = mode == "goto" ? t.nstates + 1 : 0
+    var arms <- make_arms(spec, "flex`rule", dispatch, base, at)
     let nclasses = t.nclasses
     var newBody : ExpressionPtr
     if (mode == "table") {
@@ -359,6 +414,15 @@ class FlexMacro : AstFunctionAnnotation {
             errors := "[flex] mode is table or goto, not {mode}"
             return false
         }
+        var dispatch = "if"
+        let argDispatch = find_arg(args, "dispatch")
+        if (argDispatch is tString) {
+            dispatch = argDispatch as tString
+        }
+        if (dispatch != "if" && dispatch != "goto" && dispatch != "tree") {
+            errors := "[flex] dispatch is if, goto or tree, not {dispatch}"
+            return false
+        }
         var spec : FlexSpec
         spec.func_name = string(func.name)
         var body = func.body as ExprBlock
@@ -389,7 +453,7 @@ class FlexMacro : AstFunctionAnnotation {
                 || !int_table_global(g_accept, t.accept, func.at, errors)
                 || !int_table_global(g_class, t.class_of, func.at, errors))
         }
-        func.body = make_scanner_body(spec, t, lx, mode, func.at)
+        func.body = make_scanner_body(spec, t, lx, mode, dispatch, func.at)
         return true
     }
 }
