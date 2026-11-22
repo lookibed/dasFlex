@@ -271,13 +271,77 @@ def private make_arm_tree(spec : FlexSpec; rule_var : string; lo, hi : int) : Ex
     return node
 }
 
-//! the DFA as straight-line code: `label s:` reads a byte, picks the next state by class ranges, jumps
+//! the states some path from a start state reaches through a `\n` transition; only they can hold a
+//! newline count other than zero when they accept
+def private after_newline_states(t : FlexTables) : array<bool> {
+    var seen : array<bool>
+    seen |> resize(t.nstates)
+    var work : array<int>
+    let nl_class = t.class_of[10]
+    for (s in range(t.nstates)) {
+        let nx = t.next[s * t.nclasses + nl_class]
+        if (nx >= 0 && !seen[nx]) {
+            seen[nx] = true
+            work |> push(nx)
+        }
+    }
+    while (!empty(work)) {
+        let s = work |> back()
+        work |> pop()
+        for (c in range(t.nclasses)) {
+            let nx = t.next[s * t.nclasses + c]
+            if (nx >= 0 && !seen[nx]) {
+                seen[nx] = true
+                work |> push(nx)
+            }
+        }
+    }
+    return <- seen
+}
+
+//! the moves out of state `s`, one byte-range test per class; the `\n` move also counts the newline
+def private make_goto_moves(t : FlexTables; s : int;
+                            lo_of, hi_of : array<int>) : array<ExpressionPtr> {
+    var moves : array<ExpressionPtr>
+    let nl_class = t.class_of[10]
+    for (c in range(t.nclasses)) {
+        let nx = t.next[s * t.nclasses + c]
+        continue if (nx < 0)
+        let lo = lo_of[c]
+        let hi = hi_of[c]
+        if (c == nl_class) {
+            moves |> push <| qmacro_block() {
+                if (flex`b == 10) {
+                    flex`nl_run++
+                    flex`nl_run_last = flex`i
+                    goto $v(nx)
+                }
+            }
+        } elif (lo == hi) {
+            moves |> push <| qmacro_block() {
+                if (flex`b == $v(lo)) {
+                    goto $v(nx)
+                }
+            }
+        } else {
+            moves |> push <| qmacro_block() {
+                if (flex`b >= $v(lo) && flex`b <= $v(hi)) {  // nolint:PERF014,LINT019 - any byte range, not digits
+                    goto $v(nx)
+                }
+            }
+        }
+    }
+    return <- moves
+}
+
+//! the DFA as straight-line code: `label s:` reads a byte, picks the next state by class ranges, jumps;
+//! an accepting state records the rule, the length and the newlines read so far
 def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
                               t_at : LineInfo) : array<ExpressionPtr> {
     var out : array<ExpressionPtr>
-    out |> reserve(t.nstates * 3 + 2)
+    out |> reserve(t.nstates * 3 + 4)
     let done = t.nstates
-    // class -> representative byte ranges, to test bytes directly instead of through class_of
+    // a class is a run of bytes; its ends let the code test a byte without reading `class_of`
     var lo_of, hi_of : array<int>
     lo_of |> resize(t.nclasses)
     hi_of |> resize(t.nclasses)
@@ -289,32 +353,12 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
         lo_of[c] = min(lo_of[c], b)
         hi_of[c] = max(hi_of[c], b)
     }
+    let after_nl <- after_newline_states(t)
     out |> push <| qmacro_block() {
         goto $i(cond_start)
     }
-    var moves : array<ExpressionPtr>
-    moves |> reserve(t.nclasses)
     for (s in range(t.nstates)) {
-        moves |> clear()
-        for (c in range(t.nclasses)) {
-            let nx = t.next[s * t.nclasses + c]
-            continue if (nx < 0)
-            let lo = lo_of[c]
-            let hi = hi_of[c]
-            if (lo == hi) {
-                moves |> push <| qmacro_block() {
-                    if (flex`b == $v(lo)) {
-                        goto $v(nx)
-                    }
-                }
-            } else {
-                moves |> push <| qmacro_block() {
-                    if (flex`b >= $v(lo) && flex`b <= $v(hi)) {  // nolint:PERF014,LINT019 - any byte range, not digits
-                        goto $v(nx)
-                    }
-                }
-            }
-        }
+        var moves <- make_goto_moves(t, s, lo_of, hi_of)
         let acc = t.accept[s]
         var lab_s : ExpressionPtr = new ExprLabel(at = t_at, labelName = s)
         out |> emplace(lab_s)
@@ -322,6 +366,12 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
             out |> push <| qmacro_block() {
                 flex`rule = $v(acc)
                 flex`len = flex`i - $i(lx).pos
+            }
+            if (after_nl[s]) {
+                out |> push <| qmacro_block() {
+                    flex`nl = flex`nl_run
+                    flex`nl_last = flex`nl_run_last
+                }
             }
         }
         out |> push <| qmacro_block() {
@@ -430,14 +480,17 @@ def private make_match(spec : FlexSpec; t : FlexTables; lx, mode, matcher : stri
     return <- qmacro_block_to_array() {
         var flex`i = $i(lx).pos
         var flex`b = 0
+        var flex`nl_run = 0
+        var flex`nl_run_last = 0
         let flex`start = $i(g_start)[$i(lx).cond]
         $b(states)
     }
 }
 
-//! taking the matched span as the token: from the newlines the matcher counted, or by `flex_consume`
+//! taking the matched span as the token: from the newlines the inline and goto matchers counted, or
+//! by `flex_consume` after a call to `flex_match_table`
 def private make_take(lx, mode, matcher : string) : array<ExpressionPtr> {
-    if (mode == "table" && matcher == "inline") {
+    if (mode == "goto" || matcher == "inline") {
         return <- make_token_set(lx)
     }
     return <- qmacro_block_to_array() {

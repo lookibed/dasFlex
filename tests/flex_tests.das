@@ -149,6 +149,27 @@ def kinds_of(src : string; use_goto : bool = false) : array<int> {
     return <- out
 }
 
+def next_of(var lx : FlexLexer; shape : string) : bool {
+    if (shape == "goto") {
+        return mini_goto(lx)
+    } elif (shape == "inline") {
+        return mini_inline(lx)
+    }
+    return mini(lx)
+}
+
+//! the tokens of `src` as `kind@line:col:text` from one shape of the small lexer, then the error text
+def stream_of(src, shape : string) : array<string> {
+    var lx : FlexLexer
+    flex_open(lx, src, "t.txt")
+    var out : array<string>
+    while (next_of(lx, shape)) {
+        out |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}:{text(lx)}")
+    }
+    out |> push(lx.err)
+    return <- out
+}
+
 def texts_of(src : string) : array<string> {
     var lx : FlexLexer
     flex_open(lx, src, "t.txt")
@@ -256,25 +277,17 @@ def test_goto_mode_equivalence(t : T?) {
     t |> equal(lx.err, "t.txt:1:3: unexpected '§'")
 }
 
-[test(description = "the inline matcher with goto dispatch gives the same tokens, lines and columns as the table one")]
-def test_inline_matcher_equivalence(t : T?) {
+[test(description = "goto mode and the inline matcher give the same tokens, lines, columns and errors as the table matcher")]
+def test_line_column_equivalence(t : T?) {
     let src = "if (x1 == 42) /* c\n * / */ y =\tiff;\n\n  z-1 /* a\nb\nc */ w"
-    var a, b : FlexLexer
-    flex_open(a, src, "t.txt")
-    flex_open(b, src, "t.txt")
-    var ka, kb : array<string>
-    while (mini(a)) {
-        ka |> push("{a.tok.kind}@{a.tok.line}:{a.tok.col}:{text(a)}")
+    let want <- stream_of(src, "table")
+    t |> equal(want[length(want) - 2], "2@6:6:w")
+    t |> equal(stream_of(src, "goto"), want)
+    t |> equal(stream_of(src, "inline"), want)
+    for (shape in ["table", "goto", "inline"]) {
+        var inscope bad <- stream_of("a\n §", shape)
+        t |> equal(bad[length(bad) - 1], "t.txt:2:2: unexpected '§'")
     }
-    while (mini_inline(b)) {
-        kb |> push("{b.tok.kind}@{b.tok.line}:{b.tok.col}:{text(b)}")
-    }
-    t |> equal(kb, ka)
-    t |> equal(ka[length(ka) - 1], "2@6:6:w")
-    flex_open(b, "a\n §", "t.txt")
-    while (mini_inline(b)) {
-    }
-    t |> equal(b.err, "t.txt:2:2: unexpected '§'")
 }
 
 [test(description = "text() returns the matched bytes and text_is compares without allocating")]
