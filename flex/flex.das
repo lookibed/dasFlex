@@ -17,6 +17,7 @@ struct FlexToken {
     len : int
     line : int
     col : int
+    text : string       //!< the matched text once `text()` built it; "" until then
 }
 
 //! The scanner state. `symbols` is the table a parser fills and a rule consults (C `typedef` names).
@@ -64,8 +65,13 @@ def begin(var lx : FlexLexer; cond : int) {
     lx.cond = cond
 }
 
-//! The matched text as a fresh string.
-def text(lx : FlexLexer) : string => slice(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
+//! The matched text as a string, built on the first call for a token and reused by the next ones.
+def text(var lx : FlexLexer) : string {
+    if (empty(lx.tok.text)) {
+        lx.tok.text = slice(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
+    }
+    return lx.tok.text
+}
 
 //! A length-bounded comparison of the matched text with `s`, no allocation.
 def text_is(lx : FlexLexer; s : string) : bool {
@@ -99,6 +105,7 @@ def flex_error_text(lx : FlexLexer) : string {
 def flex_consume(var lx : FlexLexer; start, len : int) {
     lx.tok.start = start
     lx.tok.len = len
+    lx.tok.text = ""
     lx.tok.line = lx.line
     lx.tok.col = lx.col
     let stop = start + len

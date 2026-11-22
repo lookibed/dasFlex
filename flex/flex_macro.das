@@ -36,11 +36,22 @@ struct private FlexSpec {
     err : string
 }
 
-//! `begin(lx, "NAME")` in a rule body becomes `begin(lx, <index>)`.
+//! `begin(lx, "NAME")` in a rule body becomes `begin(lx, <index>)`; `emit(lx, kind)` becomes the two
+//! field writes it stands for, so a rule body makes no call for its one-line action
 class private BeginRewrite : AstVisitor {
     cond_names : array<string>
     err : string
     def override visitExprCall(var expr : ExprCall?) : ExpressionPtr {
+        if (expr.name == "emit" && length(expr.arguments) == 2) {
+            var lx_ref = clone_expression(expr.arguments[0])
+            var kind = clone_expression(expr.arguments[1])
+            var inlined = qmacro_block() {
+                $e(lx_ref).tok.kind = int($e(kind))
+                $e(lx_ref).emitted = true
+            }
+            mark_generated(inlined)
+            return inlined
+        }
         if (expr.name == "begin" && length(expr.arguments) == 2
             && expr.arguments[1] is ExprConstString) {
             let cname = string((expr.arguments[1] as ExprConstString).value)

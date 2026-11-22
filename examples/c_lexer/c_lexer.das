@@ -151,7 +151,7 @@ def c_token_name(kind : int) : string =>
     kind >= 128 && kind - 128 < length(TOKEN_NAMES) ? TOKEN_NAMES[kind - 128] : to_char(kind)
 
 //! identifier, keyword, or typedef name: the rule action's decision
-def c_word_kind(lx : FlexLexer) : int {
+def c_word_kind(var lx : FlexLexer) : int {
     let word = text(lx)
     var kind = int(CTok.IDENTIFIER)
     KEYWORDS |> get(word) $(k) {
@@ -164,6 +164,7 @@ def c_word_kind(lx : FlexLexer) : int {
 }
 
 //! a one-byte punctuator is its own kind
+[inline]
 def c_byte_kind(lx : FlexLexer) : int => int(unsafe(lx.data[lx.tok.start]))
 
 [flex]

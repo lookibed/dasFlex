@@ -7,7 +7,17 @@ separate columns; a step that gave nothing stays in the table.
 | step | hypothesis | interp before/after | jit before/after | verdict |
 |---|---|---|---|---|
 | 0 base | wave-1 driver is fair: both lexers build one string per token into a `Tok` array (profile: 17 207 strings each per pass) | - | - | base of wave 2 |
+| 2 one-line actions | `emit` is a call per token and the identifier string is built twice (once for the keyword/typedef lookup, once by the driver for the token); the macro rewrites `emit` into its two field writes, `text()` caches the string on the token | pending | pending | token streams identical; JIT IR already inlined `emit`, so this is an interpreter step |
 | 1 rule dispatch | the `if (rule == i)` chain costs ~20 comparisons per token (profile: `c_next` own time 40%); a computed `goto` into a label per rule, or a binary tree, is cheaper | pending | pending | shapes `dispatch = "if" / "goto" / "tree"` added; token streams identical on all shapes |
+
+## What the JIT IR says (LLVM 22, `--jit-dump`; the dumps are kept locally)
+- the rule dispatch is already a `switch` in both shapes, so the dispatch step is an interpreter step only;
+- the matcher loop does 9 loads and 3 bounds checks per byte (`class_of`, `next`, `accept` each reload their
+  header behind the check), `flex_consume` adds a load, a compare and a `col` store per byte;
+- `flex_match_table`, `flex_consume` and `text` are calls on every token because the default JIT compiles each
+  module as its own LLVM unit; code the macro emits into the scanner's own module inlines by construction;
+- the reference `lex_probe` is not lean either: an indirect `is_alpha` call per identifier byte and a bounds check
+  per byte, which is why dasFlex can pass it.
 
 ## Ideas parked for wave 3
 - groups / tagged DFA, reader macro `%flex~`, trailing context (not speed)
