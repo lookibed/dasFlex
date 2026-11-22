@@ -25,3 +25,9 @@ separate columns; a step that gave nothing stays in the table.
 
 ## Ideas parked for wave 3
 - groups / tagged DFA, reader macro `%flex~`, trailing context (not speed)
+- the typedef lookup hashes every identifier's string; a hash folded into the DFA walk over the identifier's bytes
+  (or a span-keyed symbol table) would let both the keyword and the typedef lookup skip the string - the condition
+  under which step 5's buckets would pay
+- a driver mode that keeps tokens as spans (no `text()` per token), so a timing sees the scanner rather than the
+  string building that dominates both lexers' per-token cost
+- `matcher` is ignored in goto mode; the annotation could reject `mode = "goto", matcher = ...` (not speed)
