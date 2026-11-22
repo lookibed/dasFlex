@@ -85,6 +85,12 @@ in `flex_consume`.
 default), an `if (rule == i)` chain, or a binary tree of `if (rule < m)`. Every shape takes the same
 rules and produces the same tokens; the choice among them is a measurement.
 
+The default follows the tier the program is compiled for, read from `compiling_program().policies.jit_enabled` while the
+annotation runs: tables for the interpreter, where every simulation node costs and the table walk is the fewest nodes
+per byte, straight-line code for the JIT and the exe, where LLVM folds the per-state tests into `switch` instructions.
+`mode = "table"` or `mode = "goto"` on the annotation overrides it. The module cache keeps a record per tier, so a
+module compiled for the interpreter is compiled again, not reused, when the same program runs under the JIT.
+
 ## Rule bodies run in place {#rule-bodies}
 
 A rule's block is spliced into the generated function at its dispatch label or branch, so it sees

@@ -10,7 +10,7 @@ options indenting = 4
 // `flex` (also `flex-inline`) is the default shape, the inline matcher with goto dispatch; the
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out.
 //
-//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|probe|regex (--dump | --time N) files...
+//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|probe|regex (--dump | --time N) files...
 
 require c_lexer
 require c_lexer_goto
@@ -191,6 +191,10 @@ def lex_flex(text : string; typedefs : table<string; int>; shape : string) : arr
         }
     } elif (shape == "flex-call") {
         while (c_next_call(lx)) {
+            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+        }
+    } elif (shape == "table") {
+        while (c_next_table(lx)) {
             out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
         }
     } elif (shape == "goto-dgoto") {

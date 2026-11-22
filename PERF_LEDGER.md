@@ -16,6 +16,7 @@ separate columns; a step that gave nothing stays in the table.
 
 Measured cells: doom_am_map.i (81 647 bytes), median of 3 rounds of in-process medians (`--time 9`), daslang 0.6.6, BASE = ee7eec8,
 FINAL = 40f12d8. Run `TIMING-dasflex-wave2`, 2026-11-22 21:28 MSK, `heavy --exclusive`, machine quiet (cpu busy 1%).
+| 7 mode by tier | the interpreter is fastest on the table shape and the JIT on the goto shape (wave-2 run), and the macro sees the tier in `compiling_program().policies.jit_enabled`; the default `mode` now follows it, `mode = "table"\|"goto"` overrides | pending | pending | token streams identical in both tiers; the module cache keeps one record per tier (a `-jit` run after an interpreter run recompiles the module), checked on the tutorial |
 
 ## What the JIT IR says (LLVM 22, `--jit-dump`; the dumps are kept locally)
 - the rule dispatch is already a `switch` in both shapes, so the dispatch step is an interpreter step only;

@@ -545,11 +545,14 @@ class FlexMacro : AstFunctionAnnotation {
             return false
         }
         let lx = string(func.arguments[0].name)
-        var mode = "table"
+        // the default follows the tier the program is compiled for: tables for the interpreter, where
+        // every node costs, straight-line code for the JIT and the exe, where LLVM folds it into switches
+        var mode = compiling_program().policies.jit_enabled ? "goto" : "table"
         let argMode = find_arg(args, "mode")
         if (argMode is tString) {
             mode = argMode as tString
         }
+        to_log(LOG_INFO, "[flex] {func.name}: mode {mode}\n")
         if (mode != "table" && mode != "goto") {
             errors := "[flex] mode is table or goto, not {mode}"
             return false
