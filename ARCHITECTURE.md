@@ -15,8 +15,9 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
   equivalence classes, subset construction, the rule an accepting state carries. Knows nothing of
   source code or macros.
 - `flex/flex.das` - the run-time scanner state (`FlexLexer`, `FlexToken`), the actions a rule body
-  calls (`emit`, `begin`, `text`, `text_is`), position tracking (`flex_consume`), the error text
-  (`flex_error_text`) and the table-driven matcher (`flex_match_table`). No regex, no AST.
+  calls (`emit`, `begin`, `text`, `text_is`), the error text (`flex_error_text`), and the
+  matcher and position tracking of the `matcher="call"` shape (`flex_match_table`,
+  `flex_consume`). No regex, no AST.
 - `flex/flex_macro.das` - the `[flex]` function annotation: collects `rule` and `condition` calls,
   builds the tables through `flex_tables`, stores them as private module globals and rewrites the
   function body into the scanner loop, in table or goto mode. The only file that touches the AST.
@@ -63,20 +64,35 @@ condition fails the compile with the rule's text in the message.
 
 ## Two scanner shapes {#two-shapes}
 
-`mode="table"` (the default) emits a call to `flex_match_table` with the globals; `mode="goto"`
-emits the DFA as straight-line code - a label per state, a byte read, range tests per class and a
-computed `goto` to the next state - the way re2c and Ragel generate scanners. Both take the same
-rules and produce the same tokens; the choice is a measurement, and the table shape is the default
-because the generated function stays small whatever the rule set.
+`mode="table"` (the default) drives the DFA from the globals; `mode="goto"` emits it as
+straight-line code - a label per state, a byte read, range tests per class and a `goto` to the next
+state - the way re2c and Ragel generate scanners. Table mode is the default because the generated
+function stays small whatever the rule set.
+
+In table mode `matcher="inline"` (the default) emits the byte loop into the scanner itself, through
+raw pointers, over one merged table whose entry is `next * 256 + accept(next) + 1`: one load per
+byte yields the next state and the rule it accepts, which caps an inline scanner at 254 rules.
+`matcher="call"` calls `flex_match_table` instead. The JIT compiles each module as its own unit, so
+a call into `flex/flex.das` stays a call per token, while code the macro emits inlines by
+construction - hence the default.
+
+The inline loop and the goto code count newlines as they read: `\n` is a class of its own and only
+a move on it counts, while an accepting state records the count with the length. Taking the token
+then sets line and column without reading its bytes again; the call shape walks them a second time
+in `flex_consume`.
+
+`dispatch` picks how the matched rule reaches its body: a computed `goto` into a label per rule (the
+default), an `if (rule == i)` chain, or a binary tree of `if (rule < m)`. Every shape takes the same
+rules and produces the same tokens; the choice among them is a measurement.
 
 ## Rule bodies run in place {#rule-bodies}
 
-A rule's block is spliced into the generated function under `if (rule == i)`, so it sees the
-function's parameter - the lexer - under the name the user gave it, and anything else the function's
-module makes visible. `emit(lx, kind)` records the token kind and ends the scan; a body that does
-not emit is a skip and the loop continues; `begin(lx, "NAME")` switches the start condition, the
-macro replacing the name with its index at compile time. The matched text is a byte span
-(`tok.start`, `tok.len`) until `text()` is asked for a string.
+A rule's block is spliced into the generated function at its dispatch label or branch, so it sees
+the function's parameter - the lexer - under the name the user gave it, and anything else the
+function's module makes visible. `emit(lx, kind)` records the token kind and ends the scan; a body
+that does not emit is a skip and the loop continues; `begin(lx, "NAME")` switches the start
+condition, the macro replacing the name with its index at compile time. The matched text is a
+byte span (`tok.start`, `tok.len`) until `text()` is asked for a string.
 
 ## The symbol table {#symbols}
 

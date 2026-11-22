@@ -3,13 +3,14 @@ options indenting = 4
 
 module c_lexer_variants shared public
 
-// The example's C11 rules under every dispatch shape, for the measurement only: table mode with a
-// computed goto and with a binary tree over the rule number, and goto mode with the computed goto.
+// The example's C11 rules under the shapes other than the default, for the measurement only: table
+// mode calling `flex_match_table` with an if chain, a computed goto and a binary tree over the rule
+// number, and goto mode with the computed goto.
 
 require flex/flex_macro public
 require c_lexer
 
-[flex(dispatch = "goto")]
+[flex(dispatch = "goto", matcher = "call")]
 def c_next_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
     rule("[ \\t\\v\\f\\r\\n]+") {
     }
@@ -136,7 +137,7 @@ def c_next_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     }
 }
 
-[flex(dispatch = "tree")]
+[flex(dispatch = "tree", matcher = "call")]
 def c_next_dtree(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
     rule("[ \\t\\v\\f\\r\\n]+") {
     }
@@ -390,8 +391,8 @@ def c_next_goto_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule 
     }
 }
 
-[flex(dispatch = "goto", matcher = "inline")]
-def c_next_inline(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
+[flex(dispatch = "if", matcher = "call")]
+def c_next_call(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
     rule("[ \\t\\v\\f\\r\\n]+") {
     }
     rule("#[^\\n]*") {

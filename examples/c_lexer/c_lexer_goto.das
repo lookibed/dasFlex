@@ -3,12 +3,13 @@ options indenting = 4
 
 module c_lexer_goto shared public
 
-// The example's C11 rules compiled in `goto` mode, for the table-against-code measurement only.
+// The example's C11 rules compiled in `goto` mode with an if chain over the rule number, for the
+// table-against-code measurement only.
 
 require flex/flex_macro public
 require c_lexer
 
-[flex(mode="goto")]
+[flex(mode = "goto", dispatch = "if")]
 def c_next_goto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
     rule("[ \\t\\v\\f\\r\\n]+") {
     }

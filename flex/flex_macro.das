@@ -20,7 +20,9 @@ require flex/flex public
 // rewrites the function into the scanner: it returns true with `lx.tok` set when a rule called `emit`,
 // false at the end of input or on a byte no rule accepts (`lx.failed`, `lx.err`). Rule bodies run
 // in the function's own scope, so `lx` is the function's parameter under whatever name it carries.
-// `[flex(mode="goto")]` emits the DFA as labelled straight-line code instead of reading the tables.
+// `[flex(mode="goto")]` emits the DFA as labelled straight-line code instead of reading the tables;
+// `matcher` picks the table-mode match (`inline` by default, `call`), `dispatch` the way the matched
+// rule reaches its body (`goto` by default, `if`, `tree`).
 
 struct private FlexArm {
     rule : int
@@ -552,7 +554,7 @@ class FlexMacro : AstFunctionAnnotation {
             errors := "[flex] mode is table or goto, not {mode}"
             return false
         }
-        var dispatch = "if"
+        var dispatch = "goto"
         let argDispatch = find_arg(args, "dispatch")
         if (argDispatch is tString) {
             dispatch = argDispatch as tString
@@ -561,7 +563,7 @@ class FlexMacro : AstFunctionAnnotation {
             errors := "[flex] dispatch is if, goto or tree, not {dispatch}"
             return false
         }
-        var matcher = "call"
+        var matcher = "inline"
         let argMatcher = find_arg(args, "matcher")
         if (argMatcher is tString) {
             matcher = argMatcher as tString

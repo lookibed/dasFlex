@@ -83,8 +83,8 @@ def mini_goto(var lx : FlexLexer) : bool {
     }
 }
 
-[flex(dispatch = "goto", matcher = "inline")]
-def mini_inline(var lx : FlexLexer) : bool {
+[flex(dispatch = "if", matcher = "call")]
+def mini_call(var lx : FlexLexer) : bool {
     rule("if") {
         lx |> emit(TTok.IF)
     }
@@ -152,8 +152,8 @@ def kinds_of(src : string; use_goto : bool = false) : array<int> {
 def next_of(var lx : FlexLexer; shape : string) : bool {
     if (shape == "goto") {
         return mini_goto(lx)
-    } elif (shape == "inline") {
-        return mini_inline(lx)
+    } elif (shape == "call") {
+        return mini_call(lx)
     }
     return mini(lx)
 }
@@ -277,14 +277,14 @@ def test_goto_mode_equivalence(t : T?) {
     t |> equal(lx.err, "t.txt:1:3: unexpected '§'")
 }
 
-[test(description = "goto mode and the inline matcher give the same tokens, lines, columns and errors as the table matcher")]
+[test(description = "goto mode and the call matcher give the same tokens, lines, columns and errors as the default inline matcher")]
 def test_line_column_equivalence(t : T?) {
     let src = "if (x1 == 42) /* c\n * / */ y =\tiff;\n\n  z-1 /* a\nb\nc */ w"
-    let want <- stream_of(src, "table")
+    let want <- stream_of(src, "inline")
     t |> equal(want[length(want) - 2], "2@6:6:w")
     t |> equal(stream_of(src, "goto"), want)
-    t |> equal(stream_of(src, "inline"), want)
-    for (shape in ["table", "goto", "inline"]) {
+    t |> equal(stream_of(src, "call"), want)
+    for (shape in ["inline", "goto", "call"]) {
         var inscope bad <- stream_of("a\n §", shape)
         t |> equal(bad[length(bad) - 1], "t.txt:2:2: unexpected '§'")
     }
