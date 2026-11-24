@@ -9,7 +9,9 @@ module flex_macro shared public
 require daslib/ast_boost
 require daslib/templates_boost
 require daslib/defer
+require daslib/strings_boost
 require math
+require strings
 
 require flex/flex_regex
 require flex/flex_dfa
@@ -26,6 +28,7 @@ require flex/flex public
 
 struct private FlexArm {
     rule : int
+    site : Expression const?          //!< the rule call, for an error at its line
     body : array<ExpressionPtr>
 }
 
@@ -36,14 +39,24 @@ struct private FlexSpec {
     cond_names : array<string>
     inclusive : array<bool>
     err : string
+    err_site : Expression const?
 }
 
 //! `begin(lx, "NAME")` in a rule body becomes `begin(lx, <index>)`; `emit(lx, kind)` becomes the two
-//! field writes it stands for, so a rule body makes no call for its one-line action
+//! field writes it stands for, so a rule body makes no call for its one-line action. With `lx` set
+//! (the `%flex~` reader), `emit(kind)` and `begin(NAME)` name the lexer implicitly, and a bare name
+//! in `emit` is a member of the enum `tokens`
 class private BeginRewrite : AstVisitor {
     cond_names : array<string>
+    lx : string
+    tokens : string
     err : string
+    err_site : Expression const?
     def override visitExprCall(var expr : ExprCall?) : ExpressionPtr {
+        if (!empty(lx) && length(expr.arguments) == 1
+            && (expr.name == "emit" || expr.name == "begin")) {
+            add_implicit_lexer(expr)
+        }
         if (expr.name == "emit" && length(expr.arguments) == 2) {
             var inlined = qmacro_block() {
                 $e(expr.arguments[0]).tok.kind = int($e(expr.arguments[1]))  // nolint:PERF020,LINT019 - an enum or an int kind
@@ -64,6 +77,7 @@ class private BeginRewrite : AstVisitor {
             if (idx < 0) {
                 if (empty(err)) {
                     err = "begin(\"{cname}\"): no such start condition"
+                    err_site = expr
                 }
             } else {
                 expr.arguments[1] = new ExprConstInt(at = expr.at, value = idx)
@@ -71,23 +85,50 @@ class private BeginRewrite : AstVisitor {
         }
         return <- expr
     }
+    //! `emit(kind)` becomes `emit(lx, kind)`, `emit(NAME)` `emit(lx, tokens.NAME)`, `begin(NAME)`
+    //! `begin(lx, "NAME")`
+    def add_implicit_lexer(var expr : ExprCall?) {
+        var arg = expr.arguments[0]
+        if (arg is ExprVar) {
+            let name = string((arg as ExprVar).name)
+            if (expr.name == "begin") {
+                arg = new ExprConstString(at = arg.at, value := name)
+            } elif (!empty(tokens)) {
+                arg = new ExprField(at = arg.at, name := name,
+                                    value = new ExprVar(at = arg.at, name := tokens))
+            }
+        }
+        var lexer : ExpressionPtr = new ExprVar(at = expr.at, name := lx)
+        expr.arguments |> clear()
+        expr.arguments |> emplace(lexer)
+        expr.arguments |> emplace(arg)
+    }
 }
 
-def private collect_rule(var spec : FlexSpec; call : ExprCall?; conds : array<int>;
-                         var rw : BeginRewrite?) {
-    if (length(call.arguments) != 2 || !(call.arguments[0] is ExprConstString)
-        || !(call.arguments[1] is ExprMakeBlock)) {
-        spec.err = "rule(\"regex\") \{ ... \} expected"
+//! a failure the compile reports at the rule (or the call) it belongs to; the first one wins
+def private fail_at(var spec : FlexSpec; msg : string; site : Expression const?) {
+    if (empty(spec.err)) {
+        spec.err = msg
+        spec.err_site = site
+    }
+}
+
+//! `rule("regex", ...) { body }` with `nargs` arguments, the block last: the rule active in `conds`
+def private collect_rule(var spec : FlexSpec; call : ExprCall?; nargs : int; conds : array<int>;
+                         rw : BeginRewrite?) {
+    if (length(call.arguments) != nargs || !(call.arguments[0] is ExprConstString)
+        || !(call.arguments[nargs - 1] is ExprMakeBlock)) {
+        fail_at(spec, "rule(\"regex\") \{ ... \} expected", call)
         return
     }
     var r : FlexRule
     r.pattern = string((call.arguments[0] as ExprConstString).value)
     r.conditions := conds
-    var arm : FlexArm
-    arm.rule = length(spec.rules)
-    let blk = call.arguments[1] |> unquote_block
+    var arm = FlexArm(rule = length(spec.rules), site = call)
+    let blk = call.arguments[nargs - 1] |> unquote_block
     if (!empty(blk.arguments)) {
-        spec.err = "a rule block takes no arguments: the lexer is the function's parameter"
+        fail_at(spec, "a rule block takes no arguments: the lexer is the function's parameter",
+                call)
         return
     }
     for (s in blk.list) {
@@ -97,8 +138,8 @@ def private collect_rule(var spec : FlexSpec; call : ExprCall?; conds : array<in
         }
         arm.body |> emplace(copy)
     }
-    if (!empty(rw.err) && empty(spec.err)) {
-        spec.err = rw.err
+    if (!empty(rw.err)) {
+        fail_at(spec, rw.err, rw.err_site)
     }
     spec.rules |> emplace(r)
     spec.arms |> emplace(arm)
@@ -113,18 +154,30 @@ def private collect_conditions(var spec : FlexSpec; body : ExprBlock?) {
             let call = st as ExprCall
             if (length(call.arguments) != 3 || !(call.arguments[0] is ExprConstString)
                 || !(call.arguments[1] is ExprVar) || !(call.arguments[2] is ExprMakeBlock)) {
-                spec.err = "condition(\"NAME\", exclusive|inclusive) \{ rules \} expected"
+                fail_at(spec, "condition(\"NAME\", exclusive|inclusive) \{ rules \} expected", call)
                 return
             }
             let kind = string((call.arguments[1] as ExprVar).name)
             if (kind != "exclusive" && kind != "inclusive") {
-                spec.err = "condition kind is exclusive or inclusive, not {kind}"
+                fail_at(spec, "condition kind is exclusive or inclusive, not {kind}", call)
                 return
             }
             spec.cond_names |> push(string((call.arguments[0] as ExprConstString).value))
             spec.inclusive |> push(kind == "inclusive")
         }
     }
+}
+
+//! the conditions a rule with no condition of its own is active in: INITIAL and every inclusive one
+def private top_conditions(spec : FlexSpec) : array<int> {
+    var top_conds : array<int>
+    top_conds |> push(0)
+    for (i, inc in count(), spec.inclusive) {
+        if (inc) {
+            top_conds |> push(i)
+        }
+    }
+    return <- top_conds
 }
 
 def private collect_rules(var spec : FlexSpec; body : ExprBlock?) {
@@ -134,23 +187,17 @@ def private collect_rules(var spec : FlexSpec; body : ExprBlock?) {
             delete rw
         }
     }
-    var top_conds : array<int>
-    top_conds |> push(0)
-    for (i, inc in count(), spec.inclusive) {
-        if (inc) {
-            top_conds |> push(i)
-        }
-    }
+    let top_conds <- top_conditions(spec)
     var cond_no = 0
     for (st in body.list) {
         return if (!empty(spec.err))
         if (!(st is ExprCall)) {
-            spec.err = "only rule(...) and condition(...) calls belong in a [flex] body"
+            fail_at(spec, "only rule(...) and condition(...) calls belong in a [flex] body", st)
             return
         }
         let call = st as ExprCall
         if (call.name == "rule") {
-            collect_rule(spec, call, top_conds, rw)
+            collect_rule(spec, call, 2, top_conds, rw)
         } elif (call.name == "condition") {
             cond_no++
             var inscope own : array<int>
@@ -159,13 +206,13 @@ def private collect_rules(var spec : FlexSpec; body : ExprBlock?) {
             for (cs in cblk.list) {
                 return if (!empty(spec.err))
                 if (!(cs is ExprCall) || (cs as ExprCall).name != "rule") {
-                    spec.err = "only rule(...) calls belong in a condition block"
+                    fail_at(spec, "only rule(...) calls belong in a condition block", cs)
                     return
                 }
-                collect_rule(spec, cs as ExprCall, own, rw)
+                collect_rule(spec, cs as ExprCall, 2, own, rw)
             }
         } else {
-            spec.err = "only rule(...) and condition(...) calls belong in a [flex] body, not {call.name}"
+            fail_at(spec, "only rule(...) and condition(...) calls belong in a [flex] body, not {call.name}", call)
             return
         }
     }
@@ -542,6 +589,86 @@ def private string_arg(args : AnnotationArgumentList; name, absent : string) : s
     return arg is tString ? arg as tString : absent
 }
 
+//! the scanner shape the annotation asks for, the defaults following the tier; `err` names a bad value
+struct private FlexShape {
+    mode : string
+    dispatch : string
+    matcher : string
+    err : string
+}
+
+def private flex_shape(args : AnnotationArgumentList) : FlexShape {
+    // the default follows the tier the program is compiled for: tables for the interpreter, where
+    // every node costs, straight-line code for the JIT and the exe, where LLVM folds it into switches
+    let mode = string_arg(args, "mode", compiling_program().policies.jit_enabled ? "goto" : "table")
+    // the dispatch goes with the mode: a computed goto saves the interpreter the if chain, while
+    // under LLVM the if chain is already a switch and the computed goto adds one over label indices
+    var shape = FlexShape(mode = mode,
+                          dispatch = string_arg(args, "dispatch", mode == "table" ? "goto" : "if"),
+                          matcher = string_arg(args, "matcher", "inline"))
+    if (shape.mode != "table" && shape.mode != "goto") {
+        shape.err = "[flex] mode is table or goto, not {shape.mode}"
+    } elif (shape.dispatch != "if" && shape.dispatch != "goto" && shape.dispatch != "tree") {
+        shape.err = "[flex] dispatch is if, goto or tree, not {shape.dispatch}"
+    } elif (shape.matcher != "call" && shape.matcher != "inline") {
+        shape.err = "[flex] matcher is call or inline, not {shape.matcher}"
+    }
+    return shape
+}
+
+//! a failure that belongs to one rule is reported at that rule's line; the annotation fails with a
+//! pointer to it
+def private fail_rule(msg : string; site : Expression const?; var errors : das_string) : bool {
+    if (site == null) {
+        errors := msg
+        return false
+    }
+    compiling_program() |> macro_error(site.at, msg)
+    errors := "line {int(site.at.line)}: {msg}"
+    return false
+}
+
+//! the one back end of both front ends: the tables of `spec` through `flex_tables`, the private
+//! globals, and the scanner body in place of `func`'s
+def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexShape;
+                          var errors : das_string) : bool {
+    return fail_rule(spec.err, spec.err_site, errors) if (!empty(spec.err))
+    if (empty(spec.rules)) {
+        errors := "[flex] body has no rules"
+        return false
+    }
+    if (shape.matcher == "inline" && length(spec.rules) > 254) {
+        errors := "[flex] matcher = inline carries at most 254 rules in its merged table"
+        return false
+    }
+    let t <- flex_tables(spec.rules, length(spec.cond_names))
+    if (!empty(t.err)) {
+        for (arm in spec.arms) {
+            return fail_rule(t.err, arm.site, errors) if (starts_with(t.err, "rule {arm.rule}:"))
+        }
+        errors := t.err
+        return false
+    }
+    let lx = string(func.arguments[0].name)
+    to_log(LOG_INFO, "[flex] {func.name}: mode {shape.mode} dispatch {shape.dispatch}\n")
+    let g_next = "{func.name}`flex`next"
+    let g_accept = "{func.name}`flex`accept"
+    let g_class = "{func.name}`flex`class"
+    let g_start = "{func.name}`flex`start"
+    let g_merged = "{func.name}`flex`merged"
+    return false if (!int_table_global(g_start, t.start, func.at, errors))
+    if (shape.mode == "table" && shape.matcher == "inline") {
+        return false if (!int_table_global(g_merged, merged_table(t), func.at, errors)
+            || !int_table_global(g_class, t.class_of, func.at, errors))
+    } elif (shape.mode == "table") {
+        return false if (!int_table_global(g_next, t.next, func.at, errors)
+            || !int_table_global(g_accept, t.accept, func.at, errors)
+            || !int_table_global(g_class, t.class_of, func.at, errors))
+    }
+    func.body = make_scanner_body(spec, t, lx, shape.mode, shape.dispatch, shape.matcher, func.at)
+    return true
+}
+
 [function_macro(name="flex")]
 class FlexMacro : AstFunctionAnnotation {
     def override apply(var func : FunctionPtr; var group : ModuleGroup;
@@ -550,25 +677,9 @@ class FlexMacro : AstFunctionAnnotation {
             errors := "[flex] takes one argument: var lx : FlexLexer"
             return false
         }
-        let lx = string(func.arguments[0].name)
-        // the default follows the tier the program is compiled for: tables for the interpreter, where
-        // every node costs, straight-line code for the JIT and the exe, where LLVM folds it into switches
-        let mode = string_arg(args, "mode", compiling_program().policies.jit_enabled ? "goto" : "table")
-        if (mode != "table" && mode != "goto") {
-            errors := "[flex] mode is table or goto, not {mode}"
-            return false
-        }
-        // the dispatch goes with the mode: a computed goto saves the interpreter the if chain, while
-        // under LLVM the if chain is already a switch and the computed goto adds one over label indices
-        let dispatch = string_arg(args, "dispatch", mode == "table" ? "goto" : "if")
-        to_log(LOG_INFO, "[flex] {func.name}: mode {mode} dispatch {dispatch}\n")
-        if (dispatch != "if" && dispatch != "goto" && dispatch != "tree") {
-            errors := "[flex] dispatch is if, goto or tree, not {dispatch}"
-            return false
-        }
-        let matcher = string_arg(args, "matcher", "inline")
-        if (matcher != "call" && matcher != "inline") {
-            errors := "[flex] matcher is call or inline, not {matcher}"
+        let shape = flex_shape(args)
+        if (!empty(shape.err)) {
+            errors := shape.err
             return false
         }
         var spec : FlexSpec
@@ -578,38 +689,90 @@ class FlexMacro : AstFunctionAnnotation {
         if (empty(spec.err)) {
             collect_rules(spec, body)
         }
-        if (!empty(spec.err)) {
-            errors := spec.err
+        return flex_generate(func, spec, shape, errors)
+    }
+}
+
+//! the start conditions of a `%flex~` reader: `conditions` is `NAME:x NAME:s ...`, exclusive or inclusive
+def private text_conditions(var spec : FlexSpec; conditions : string) {
+    spec.cond_names |> push("INITIAL")
+    spec.inclusive |> push(false)
+    for (item in split(conditions, " ")) {
+        continue if (empty(item))
+        var inscope parts <- split(item, ":")
+        spec.cond_names |> push(parts[0])
+        spec.inclusive |> push(length(parts) > 1 && parts[1] == "s")
+    }
+}
+
+//! a reader rule's condition list as indices: "" is INITIAL and the inclusive conditions, `*` all
+//! of them, else the names it lists
+def private text_rule_conditions(var spec : FlexSpec; names : string;
+                                 site : Expression const?) : array<int> {
+    if (empty(names)) {
+        return <- top_conditions(spec)
+    }
+    if (names == "*") {
+        return <- [for (i in range(length(spec.cond_names))); i]
+    }
+    var conds : array<int>
+    for (name in split(names, ",")) {
+        let idx = find_index(spec.cond_names, name)
+        if (idx < 0) {
+            fail_at(spec, "<{name}>: no such start condition", site)
+        } else {
+            conds |> push(idx)
+        }
+    }
+    return <- conds
+}
+
+def private collect_text_rules(var spec : FlexSpec; body : ExprBlock?; lx, tokens : string) {
+    var rw = new BeginRewrite(cond_names := spec.cond_names, lx = lx, tokens = tokens)
+    defer() {
+        unsafe {
+            delete rw
+        }
+    }
+    for (st in body.list) {
+        return if (!empty(spec.err))
+        if (!(st is ExprCall)) {
+            fail_at(spec, "only rule(...) calls belong in a [flex_text] body", st)
+            return
+        }
+        let call = st as ExprCall
+        if (call.name != "rule" || length(call.arguments) != 3
+            || !(call.arguments[1] is ExprConstString)) {
+            fail_at(spec, "rule(\"regex\", \"conditions\") \{ ... \} expected", call)
+            return
+        }
+        let names = string((call.arguments[1] as ExprConstString).value)
+        var inscope conds <- text_rule_conditions(spec, names, call)
+        collect_rule(spec, call, 3, conds, rw)
+    }
+}
+
+//! the function the `%flex~` reader writes: `rule("regex", "conditions") { action }` per rule line,
+//! the start conditions and the token enum as annotation arguments; it feeds the same `FlexSpec`
+//! and the same `flex_generate` as `[flex]`
+[function_macro(name="flex_text")]
+class FlexTextMacro : AstFunctionAnnotation {
+    def override apply(var func : FunctionPtr; var group : ModuleGroup;
+                       var args : AnnotationArgumentList; var errors : das_string) : bool {
+        if (length(func.arguments) != 1) {
+            errors := "[flex_text] takes one argument: var lx : FlexLexer"
             return false
         }
-        if (empty(spec.rules)) {
-            errors := "[flex] body has no rules"
+        let shape = flex_shape(args)
+        if (!empty(shape.err)) {
+            errors := shape.err
             return false
         }
-        if (matcher == "inline" && length(spec.rules) > 254) {
-            errors := "[flex] matcher = inline carries at most 254 rules in its merged table"
-            return false
-        }
-        let t <- flex_tables(spec.rules, length(spec.cond_names))
-        if (!empty(t.err)) {
-            errors := t.err
-            return false
-        }
-        let g_next = "{func.name}`flex`next"
-        let g_accept = "{func.name}`flex`accept"
-        let g_class = "{func.name}`flex`class"
-        let g_start = "{func.name}`flex`start"
-        let g_merged = "{func.name}`flex`merged"
-        return false if (!int_table_global(g_start, t.start, func.at, errors))
-        if (mode == "table" && matcher == "inline") {
-            return false if (!int_table_global(g_merged, merged_table(t), func.at, errors)
-                || !int_table_global(g_class, t.class_of, func.at, errors))
-        } elif (mode == "table") {
-            return false if (!int_table_global(g_next, t.next, func.at, errors)
-                || !int_table_global(g_accept, t.accept, func.at, errors)
-                || !int_table_global(g_class, t.class_of, func.at, errors))
-        }
-        func.body = make_scanner_body(spec, t, lx, mode, dispatch, matcher, func.at)
-        return true
+        var spec : FlexSpec
+        spec.func_name = string(func.name)
+        text_conditions(spec, string_arg(args, "conditions", ""))
+        collect_text_rules(spec, func.body as ExprBlock, string(func.arguments[0].name),
+                           string_arg(args, "tokens", ""))
+        return flex_generate(func, spec, shape, errors)
     }
 }
