@@ -16,6 +16,7 @@ require strings
 require flex/flex_regex
 require flex/flex_dfa
 require flex/flex public
+require flex/flex_reader public
 
 // `[flex]` on `def name(var lx : FlexLexer) : bool { rule("re") { ... } condition("C", exclusive) { ... } }`
 // builds the DFA of every rule at compile time, stores its tables as private module globals and
