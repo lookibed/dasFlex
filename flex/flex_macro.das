@@ -22,7 +22,7 @@ require flex/flex public
 // in the function's own scope, so `lx` is the function's parameter under whatever name it carries.
 // `[flex(mode="goto")]` emits the DFA as labelled straight-line code instead of reading the tables;
 // `matcher` picks the table-mode match (`inline` by default, `call`), `dispatch` the way the matched
-// rule reaches its body (`goto` by default, `if`, `tree`).
+// rule reaches its body (`goto` by default in table mode, `if` in goto mode, `tree`).
 
 struct private FlexArm {
     rule : int
@@ -536,6 +536,12 @@ def private make_scanner_body(spec : FlexSpec; t : FlexTables; lx, mode, dispatc
     return newBody
 }
 
+//! the annotation's string argument `name`, or `absent` when the annotation omits it
+def private string_arg(args : AnnotationArgumentList; name, absent : string) : string {
+    let arg = find_arg(args, name)
+    return arg is tString ? arg as tString : absent
+}
+
 [function_macro(name="flex")]
 class FlexMacro : AstFunctionAnnotation {
     def override apply(var func : FunctionPtr; var group : ModuleGroup;
@@ -547,30 +553,20 @@ class FlexMacro : AstFunctionAnnotation {
         let lx = string(func.arguments[0].name)
         // the default follows the tier the program is compiled for: tables for the interpreter, where
         // every node costs, straight-line code for the JIT and the exe, where LLVM folds it into switches
-        var mode = compiling_program().policies.jit_enabled ? "goto" : "table"
-        let argMode = find_arg(args, "mode")
-        if (argMode is tString) {
-            mode = argMode as tString
-        }
-        to_log(LOG_INFO, "[flex] {func.name}: mode {mode}\n")
+        let mode = string_arg(args, "mode", compiling_program().policies.jit_enabled ? "goto" : "table")
         if (mode != "table" && mode != "goto") {
             errors := "[flex] mode is table or goto, not {mode}"
             return false
         }
-        var dispatch = "goto"
-        let argDispatch = find_arg(args, "dispatch")
-        if (argDispatch is tString) {
-            dispatch = argDispatch as tString
-        }
+        // the dispatch goes with the mode: a computed goto saves the interpreter the if chain, while
+        // under LLVM the if chain is already a switch and the computed goto adds one over label indices
+        let dispatch = string_arg(args, "dispatch", mode == "table" ? "goto" : "if")
+        to_log(LOG_INFO, "[flex] {func.name}: mode {mode} dispatch {dispatch}\n")
         if (dispatch != "if" && dispatch != "goto" && dispatch != "tree") {
             errors := "[flex] dispatch is if, goto or tree, not {dispatch}"
             return false
         }
-        var matcher = "inline"
-        let argMatcher = find_arg(args, "matcher")
-        if (argMatcher is tString) {
-            matcher = argMatcher as tString
-        }
+        let matcher = string_arg(args, "matcher", "inline")
         if (matcher != "call" && matcher != "inline") {
             errors := "[flex] matcher is call or inline, not {matcher}"
             return false

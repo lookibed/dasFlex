@@ -81,9 +81,12 @@ a move on it counts, while an accepting state records the count with the length.
 then sets line and column without reading its bytes again; the call shape walks them a second time
 in `flex_consume`.
 
-`dispatch` picks how the matched rule reaches its body: a computed `goto` into a label per rule (the
-default), an `if (rule == i)` chain, or a binary tree of `if (rule < m)`. Every shape takes the same
-rules and produces the same tokens; the choice among them is a measurement.
+`dispatch` picks how the matched rule reaches its body: a computed `goto` into a label per rule, an
+`if (rule == i)` chain, or a binary tree of `if (rule < m)`. Every shape takes the same rules and
+produces the same tokens; the choice among them is a measurement. The default goes with the mode: a
+computed `goto` in table mode, where it saves the interpreter the comparison chain, and the `if` chain
+in goto mode, where LLVM already turns the chain into a `switch` and a computed `goto` adds a second
+`switch` over label indices. An explicit `dispatch` overrides it.
 
 The default follows the tier the program is compiled for, read from `compiling_program().policies.jit_enabled` while the
 annotation runs: tables for the interpreter, where every simulation node costs and the table walk is the fewest nodes

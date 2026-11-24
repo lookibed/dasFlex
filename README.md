@@ -39,9 +39,10 @@ def main() {
 - `condition("NAME", exclusive|inclusive) { rules }` declares a start condition; `begin(lx, "NAME")`
   switches to it, `begin(lx, "INITIAL")` back.
 - `[flex(mode = "goto")]` emits the automaton as straight-line code instead of tables;
-  `matcher = "call"` and `dispatch = "if"|"tree"` pick the other shapes; the defaults,
-  `matcher = "inline"` and `dispatch = "goto"`, keep the byte loop in the scanner and jump straight
-  to the matched rule's body (`ARCHITECTURE.md#two-shapes`).
+  `matcher = "call"` and `dispatch = "if"|"goto"|"tree"` pick the other shapes; the defaults follow
+  the tier: table mode with `matcher = "inline"` and `dispatch = "goto"` under the interpreter, goto
+  mode with `dispatch = "if"` under the JIT and the exe; `mode =` alone takes the dispatch that goes
+  with it (`ARCHITECTURE.md#two-shapes`).
 - `lx.symbols` is a `table<string; int>` a parser fills and a rule may consult.
 
 Install: `daspkg install github.com/lookibed/dasFlex`, then `require flex/flex_macro`.
