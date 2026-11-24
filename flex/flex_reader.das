@@ -106,7 +106,8 @@ def private quoted(var s : RScan; var w : StringBuilderWriter) {
     }
 }
 
-//! `{name}` at the cursor, when it names a definition: its regex in parentheses
+//! `{name}` at the cursor, when it names a definition: its regex in non-capturing parentheses, so
+//! `group(n)` in an action counts only the groups the rule itself writes
 def private definition_ref(var s : RScan; defs : table<string; string>) : string {
     var k = 1
     while (is_ident(peek(s, k), k == 1)) {
@@ -119,7 +120,7 @@ def private definition_ref(var s : RScan; defs : table<string; string>) : string
         return ""
     }
     s.pos += k + 1
-    return "({defs?[name] ?? ""})"
+    return "(?:{defs?[name] ?? ""})"
 }
 
 //! a flex pattern up to the first blank outside quotes and brackets, as `daslib/regex` text

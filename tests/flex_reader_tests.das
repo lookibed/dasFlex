@@ -55,12 +55,27 @@ WORD    [a-z]({D}|[a-z])*
 .                   { }
 %%
 
+// what the actions of `r_groups` saw, one line per token
+var private reader_group_log : array<string>
+
+%flex~ r_groups : RTok
+D       [0-9]
+%rules
+{D}+"="([a-z]+)     { reader_group_log |> push("{group(1)}@{group_span(1)}"); emit(WORD) }
+(0x)?{D}+           {
+    reader_group_log |> push("'{lx |> group(1)}'@{lx |> group_span(1)}")
+    emit(NUM)
+}
+" "+
+%%
+
 //! the tokens of `src` as `kind:text` from one of the reader lexers, then the error text
 def stream(src, which : string) : array<string> {
     var lx : FlexLexer
     flex_open(lx, src, "t.txt")
     var out : array<string>
-    while (which == "kinds" ? r_kinds(lx) : which == "defs" ? r_defs(lx) : r_untyped(lx)) {
+    while (which == "kinds" ? r_kinds(lx) : which == "defs" ? r_defs(lx)
+           : which == "groups" ? r_groups(lx) : r_untyped(lx)) {
         out |> push("{lx.tok.kind}:{text(lx)}")
     }
     out |> push(lx.err)
@@ -123,6 +138,14 @@ def test_actions(t : T?) {
     t |> equal(stream("#x\ny#", "kinds"), ["{int(RTok.BODY)}:x\ny", ""])
 }
 
+[test(description = "an action calls group(n) and group_span(n); a definition is a non-capturing group, so n counts the rule's own groups")]
+def test_groups(t : T?) {
+    reader_group_log |> clear()
+    t |> equal(stream("12=ab 0x7 9", "groups"),
+               ["{int(RTok.WORD)}:12=ab", "{int(RTok.NUM)}:0x7", "{int(RTok.NUM)}:9", ""])
+    t |> equal(reader_group_log, ["ab@3,5", "'0x'@6,8", "''@0,0"])
+}
+
 [test(description = "the source the reader writes keeps every rule on the line it was written on")]
 def test_line_preserving_source(t : T?) {
     let text = " lex : E\n%x C\n\n%rules\n\"a\"   \{\n    emit(A)\n\}\n<C>b\n"
@@ -171,8 +194,20 @@ def test_errors(t : T?) {
     }
 }
 
-[test(description = "group() in a [flex] rule whose regex has no capture group fails the compile at the rule's line")]
+[test(description = "group() in a rule whose regex has no capture group, or past its last group, fails the compile at the rule's line, in both forms")]
 def test_group_errors(t : T?) {
+    t |> run("reader: a regex without groups") @(t : T?) {
+        let issues = compile_issues("g1.das",
+                                    reader_module("", "\"a\"  \{ emit(A) \}\n[0-9]+   \{ print(group(1)) \}\n"))
+        t |> success(find(issues, "group() asks for a capture group, the regex has none") >= 0, issues)
+        t |> success(find(issues, "g1.das:9:") >= 0, issues)
+    }
+    t |> run("reader: an index past the last group") @(t : T?) {
+        let issues = compile_issues("g2.das",
+                                    reader_module("", "\"a\"  \{ emit(A) \}\n([0-9]+)   \{ print(group_span(2)) \}\n"))
+        t |> success(find(issues, "group(2) asks for a group the regex does not have (1)") >= 0, issues)
+        t |> success(find(issues, "g2.das:9:") >= 0, issues)
+    }
     t |> run("[flex]: a regex without groups") @(t : T?) {
         let src = ("options gen2\nrequire flex/flex_macro\n[flex]\ndef bad(var lx : FlexLexer) : bool \{\n"
             + "    rule(\"a\") \{\n        lx |> emit(1)\n    \}\n"
