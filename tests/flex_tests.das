@@ -400,3 +400,151 @@ def test_minimized_start_states(t : T?) {
     t |> equal(diff.nstates, 5)
     t |> equal(diff.start, [0, 1])
 }
+
+// what the rule bodies of the group lexers below saw, one line per token
+var private group_log : array<string>
+
+[flex]
+def groups_kv(var lx : FlexLexer) : bool {
+    rule("([a-z]+)=([0-9]+)") {
+        group_log |> push("{lx |> group(1)}|{group(lx, 2)}|{lx |> group_span(1)}|{lx |> group_span(2)}|{lx |> group(0)}")
+        lx |> emit(1)
+    }
+    rule("(0x)?([0-9a-fA-F]+)") {
+        group_log |> push("'{lx |> group(1)}'|{lx |> group(2)}|{lx |> group_span(1)}")
+        lx |> emit(2)
+    }
+    rule("[ ]+") {
+    }
+}
+
+[flex(mode = "goto")]
+def groups_kv_goto(var lx : FlexLexer) : bool {
+    rule("([a-z]+)=([0-9]+)") {
+        group_log |> push("{lx |> group(1)}|{group(lx, 2)}|{lx |> group_span(1)}|{lx |> group_span(2)}|{lx |> group(0)}")
+        lx |> emit(1)
+    }
+    rule("(0x)?([0-9a-fA-F]+)") {
+        group_log |> push("'{lx |> group(1)}'|{lx |> group(2)}|{lx |> group_span(1)}")
+        lx |> emit(2)
+    }
+    rule("[ ]+") {
+    }
+}
+
+//! `group_log` after lexing `src` with the table or the goto shape, then `kind:text` per token
+def group_stream(src : string; use_goto : bool) : array<string> {
+    group_log |> clear()
+    var lx : FlexLexer
+    flex_open(lx, src, "t.txt")
+    var kinds : array<string>
+    while (use_goto ? groups_kv_goto(lx) : groups_kv(lx)) {
+        kinds |> push("{lx.tok.kind}:{text(lx)}")
+    }
+    var out <- group_log
+    out |> push_from(kinds)
+    out |> push(lx.err)
+    return <- out
+}
+
+[test(description = "group(n) is the text of capture group n of the token, group_span(n) its input bytes, group(0) the token")]
+def test_group_text_and_span(t : T?) {
+    t |> equal(group_stream("ab=12  c=3", false),
+               ["ab|12|0,2|3,5|ab=12", "c|3|7,8|9,10|c=3", "1:ab=12", "1:c=3", ""])
+}
+
+[test(description = "a group that took no part in the match is the empty string, its span range(0, 0)")]
+def test_group_not_participating(t : T?) {
+    t |> equal(group_stream("ff 0x1a", false),
+               ["''|ff|0,0", "'0x'|1a|3,5", "2:ff", "2:0x1a", ""])
+}
+
+[test(description = "two rules with groups in one lexer each re-run their own regex, in table and goto mode alike")]
+def test_two_rules_with_groups(t : T?) {
+    let src = "ab=1 0x2 c=3 7"
+    let want <- ["ab|1|0,2|3,4|ab=1", "'0x'|2|5,7", "c|3|9,10|11,12|c=3", "''|7|0,0",
+                 "1:ab=1", "2:0x2", "1:c=3", "2:7", ""]
+    t |> equal(group_stream(src, false), want)
+    t |> equal(group_stream(src, true), want)
+}
+
+[flex]
+def groups_cached(var lx : FlexLexer) : bool {
+    rule("([a-z]+)=([0-9]+)") {
+        let first = lx |> group_span(1)
+        lx.groups[1] = range(100, 101)
+        group_log |> push("{first}|{lx |> group_span(1)}")
+        lx |> emit(1)
+    }
+    rule("[0-9]+") {
+        lx |> emit(2)
+    }
+    rule("[ ]+") {
+    }
+}
+
+[test(description = "a token's groups are matched on the first group call and reused by the next; a rule without group calls runs no regex")]
+def test_group_match_once(t : T?) {
+    group_log |> clear()
+    var lx : FlexLexer
+    flex_open(lx, "a=1 bc=2", "t.txt")
+    while (groups_cached(lx)) {
+    }
+    // the second call reads the slot the first one filled, not a second match
+    t |> equal(group_log, ["0,1|100,101", "4,6|100,101"])
+    flex_open(lx, "12 34", "t.txt")
+    while (groups_cached(lx)) {
+    }
+    t |> equal(lx.groups_re, 0ul)
+}
+
+[flex]
+def groups_lazy(var lx : FlexLexer) : bool {
+    rule("([a-z]+)([a-z]*)") {
+        group_log |> push("{lx |> group(1)}|{lx |> group(2)}")
+        lx |> emit(1)
+    }
+}
+
+[test(description = "KNOWN LIMIT of the re-match path on daslang 0.6.6: daslib/regex runs a greedy + before a * lazily, so group 1 of ([a-z]+)([a-z]*) on abc is a, not abc; the token is right")]
+def test_group_lazy_quirk(t : T?) {
+    group_log |> clear()
+    var lx : FlexLexer
+    flex_open(lx, "abc", "t.txt")
+    t |> success(groups_lazy(lx))
+    t |> equal(text(lx), "abc")
+    // a daslib/regex with greedy quantifiers gives "abc|"; this binary gives the short group
+    t |> equal(group_log, ["a|bc"])
+}
+
+[flex]
+def groups_with_actions(var lx : FlexLexer) : bool {
+    rule("([a-z]+)<") {
+        group_log |> push("{text(lx)}|{lx |> group(1)}|{text(lx)}")
+        lx |> begin("ANGLE")
+        lx |> emit(1)
+    }
+    rule("[ ]+") {
+    }
+    condition("ANGLE", exclusive) {
+        rule("([0-9]+)>") {
+            group_log |> push("{lx |> group(1)}|{text(lx)}")
+            lx |> begin("INITIAL")
+            lx |> emit(2)
+        }
+    }
+}
+
+[test(description = "text(), emit and begin behave as before in a rule that calls group")]
+def test_group_with_text_emit_begin(t : T?) {
+    group_log |> clear()
+    var lx : FlexLexer
+    flex_open(lx, "ab<12> cd<3>", "t.txt")
+    var toks : array<string>
+    while (groups_with_actions(lx)) {
+        toks |> push("{lx.tok.kind}:{text(lx)}@{lx.tok.col}")
+    }
+    t |> equal(toks, ["1:ab<@1", "2:12>@4", "1:cd<@8", "2:3>@11"])
+    t |> equal(group_log, ["ab<|ab|ab<", "12|12>", "cd<|cd|cd<", "3|3>"])
+    t |> success(!lx.failed)
+}

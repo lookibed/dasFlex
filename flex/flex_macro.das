@@ -10,6 +10,7 @@ require daslib/ast_boost
 require daslib/templates_boost
 require daslib/defer
 require daslib/strings_boost
+require daslib/regex
 require math
 require strings
 
@@ -31,6 +32,7 @@ struct private FlexArm {
     rule : int
     site : Expression const?          //!< the rule call, for an error at its line
     body : array<ExpressionPtr>
+    group_re : string                 //!< the global of the rule's group regex; "" when no `group` call
 }
 
 struct private FlexSpec {
@@ -44,19 +46,34 @@ struct private FlexSpec {
 }
 
 //! `begin(lx, "NAME")` in a rule body becomes `begin(lx, <index>)`; `emit(lx, kind)` becomes the two
-//! field writes it stands for, so a rule body makes no call for its one-line action. With `lx` set
-//! (the `%flex~` reader), `emit(kind)` and `begin(NAME)` name the lexer implicitly, and a bare name
-//! in `emit` is a member of the enum `tokens`
+//! field writes it stands for, so a rule body makes no call for its one-line action;
+//! `group(lx, n)` and `group_span(lx, n)` become calls on the rule's group regex `group_re`. With
+//! `lx` set (the `%flex~` reader), `emit(kind)`, `begin(NAME)` and `group(n)` name the lexer
+//! implicitly, and a bare name in `emit` is a member of the enum `tokens`
 class private BeginRewrite : AstVisitor {
     cond_names : array<string>
     lx : string
     tokens : string
     err : string
     err_site : Expression const?
+    group_re : string
+    uses_groups : bool
+    group_max : int                 //!< the highest constant group index the rule asks for
     def override visitExprCall(var expr : ExprCall?) : ExpressionPtr {
-        if (!empty(lx) && length(expr.arguments) == 1
-            && (expr.name == "emit" || expr.name == "begin")) {
-            add_implicit_lexer(expr)
+        let is_group = expr.name == "group" || expr.name == "group_span"
+        if (!empty(lx) && length(expr.arguments) == 1) {
+            if (expr.name == "emit" || expr.name == "begin") {
+                add_implicit_lexer(expr)
+            } elif (is_group) {
+                var index = expr.arguments[0]
+                var lexer : ExpressionPtr = new ExprVar(at = expr.at, name := lx)
+                expr.arguments |> clear()
+                expr.arguments |> emplace(lexer)
+                expr.arguments |> emplace(index)
+            }
+        }
+        if (is_group && length(expr.arguments) == 2) {
+            return group_call(expr)
         }
         if (expr.name == "emit" && length(expr.arguments) == 2) {
             var inlined = qmacro_block() {
@@ -86,6 +103,15 @@ class private BeginRewrite : AstVisitor {
         }
         return <- expr
     }
+    //! `group(lx, n)` becomes `flex_group(lx, <the rule's regex>, n)`, `group_span` likewise
+    def group_call(var expr : ExprCall?) : ExpressionPtr {
+        uses_groups = true
+        if (expr.arguments[1] is ExprConstInt) {
+            group_max = max(group_max, (expr.arguments[1] as ExprConstInt).value)
+        }
+        let fname = expr.name == "group" ? "flex_group" : "flex_group_span"
+        return qmacro($c(fname)($e(expr.arguments[0]), $i(group_re), $e(expr.arguments[1])))
+    }
     //! `emit(kind)` becomes `emit(lx, kind)`, `emit(NAME)` `emit(lx, tokens.NAME)`, `begin(NAME)`
     //! `begin(lx, "NAME")`
     def add_implicit_lexer(var expr : ExprCall?) {
@@ -114,9 +140,22 @@ def private fail_at(var spec : FlexSpec; msg : string; site : Expression const?)
     }
 }
 
+//! a rule whose body calls `group` needs a capture group in its regex, and every constant index
+//! asked for; a regex that does not parse is left to `flex_tables`, which names it
+def private check_groups(var spec : FlexSpec; pattern : string; group_max : int; site : Expression const?) {
+    var re : Regex
+    return if (!regex_compile(re, flex_group_pattern(pattern)))
+    let ngroups = length(re.groups) - 1
+    if (ngroups == 0) {
+        fail_at(spec, "rule(\"{pattern}\"): group() asks for a capture group, the regex has none", site)
+    } elif (group_max > ngroups) {
+        fail_at(spec, "rule(\"{pattern}\"): group({group_max}) asks for a group the regex does not have ({ngroups})", site)
+    }
+}
+
 //! `rule("regex", ...) { body }` with `nargs` arguments, the block last: the rule active in `conds`
 def private collect_rule(var spec : FlexSpec; call : ExprCall?; nargs : int; conds : array<int>;
-                         rw : BeginRewrite?) {
+                         var rw : BeginRewrite?) {
     if (length(call.arguments) != nargs || !(call.arguments[0] is ExprConstString)
         || !(call.arguments[nargs - 1] is ExprMakeBlock)) {
         fail_at(spec, "rule(\"regex\") \{ ... \} expected", call)
@@ -132,6 +171,9 @@ def private collect_rule(var spec : FlexSpec; call : ExprCall?; nargs : int; con
                 call)
         return
     }
+    rw.group_re = "{spec.func_name}`flex`re`{arm.rule}"
+    rw.uses_groups = false
+    rw.group_max = 0
     for (s in blk.list) {
         var copy = clone_expression(s)
         make_visitor(*rw) $(adapter) {
@@ -141,6 +183,10 @@ def private collect_rule(var spec : FlexSpec; call : ExprCall?; nargs : int; con
     }
     if (!empty(rw.err)) {
         fail_at(spec, rw.err, rw.err_site)
+    }
+    if (rw.uses_groups) {
+        check_groups(spec, r.pattern, rw.group_max, call)
+        arm.group_re = rw.group_re
     }
     spec.rules |> emplace(r)
     spec.arms |> emplace(arm)
@@ -241,6 +287,23 @@ def private int_table_global(name : string; vals : array<int>; at : LineInfo;
     var mkMove = new ExprCall(at = at, name := "to_array_move")
     mkMove.arguments |> emplace(mkArr)
     if (!(compiling_module() |> add_global_private_var(name, at, mkMove))) {
+        errors := "can't add the global {name}"
+        return false
+    }
+    return true
+}
+
+//! the private global holding a rule's group regex, compiled when the module's globals initialize
+def private regex_global(name, pattern : string; at : LineInfo; var errors : das_string) : bool {
+    var init = new ExprCall(at = at, name := "flex_group_regex")
+    init.arguments |> emplace_new <| new ExprConstString(at = at, value := pattern)
+    var vvar <- new Variable(at = at, name := name, init = init,
+                             _type = new TypeDecl(at = at, baseType = Type.autoinfer,
+                                                  flags = TypeDeclFlags.removeConstant))
+    vvar.flags.generated = true
+    vvar.flags.private_variable = true
+    vvar.flags.init_via_move = true
+    if (!(compiling_module() |> add_variable(vvar))) {
         errors := "can't add the global {name}"
         return false
     }
@@ -665,6 +728,10 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
         return false if (!int_table_global(g_next, t.next, func.at, errors)
             || !int_table_global(g_accept, t.accept, func.at, errors)
             || !int_table_global(g_class, t.class_of, func.at, errors))
+    }
+    for (arm in spec.arms) {
+        continue if (empty(arm.group_re))
+        return false if (!regex_global(arm.group_re, spec.rules[arm.rule].pattern, arm.site.at, errors))
     }
     func.body = make_scanner_body(spec, t, lx, shape.mode, shape.dispatch, shape.matcher, func.at)
     return true

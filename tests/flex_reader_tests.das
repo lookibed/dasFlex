@@ -170,3 +170,15 @@ def test_errors(t : T?) {
         t |> success(find(issues, "e6.das:7:") >= 0, issues)
     }
 }
+
+[test(description = "group() in a [flex] rule whose regex has no capture group fails the compile at the rule's line")]
+def test_group_errors(t : T?) {
+    t |> run("[flex]: a regex without groups") @(t : T?) {
+        let src = ("options gen2\nrequire flex/flex_macro\n[flex]\ndef bad(var lx : FlexLexer) : bool \{\n"
+            + "    rule(\"a\") \{\n        lx |> emit(1)\n    \}\n"
+            + "    rule(\"[0-9]+\") \{\n        print(lx |> group(1))\n    \}\n\}\n")
+        let issues = compile_issues("g3.das", src)
+        t |> success(find(issues, "group() asks for a capture group, the regex has none") >= 0, issues)
+        t |> success(find(issues, "g3.das:8:") >= 0, issues)
+    }
+}

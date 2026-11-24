@@ -5,6 +5,7 @@ options strict_smart_pointers = true
 module flex shared public
 
 require daslib/strings_boost
+require daslib/regex
 
 // The scanner the generated code drives: input as raw bytes, a cursor, the token the last rule
 // emitted, and line/column kept by counting newlines in each consumed span. Nothing here allocates;
@@ -35,6 +36,9 @@ struct FlexLexer {
     file : string
     symbols : table<string; int>
     err : string
+    groups : array<range>       //!< the capture groups of one token, input offsets; -1 where absent
+    groups_start : int          //!< the `tok.start` `groups` belong to
+    groups_re : uint64          //!< the regex that filled `groups`, 0 when none did
 }
 
 //! Open `src` for scanning: the bytes are copied once, the string may go.
@@ -50,6 +54,7 @@ def flex_open(var lx : FlexLexer; src : string; file : string = "") {
     lx.failed = false
     lx.file = file
     lx.err = ""
+    lx.groups_re = 0ul
 }
 
 def flex_at_end(lx : FlexLexer) : bool => lx.pos >= lx.len
@@ -71,6 +76,50 @@ def text(var lx : FlexLexer) : string {
         lx.tok.text = slice(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
     }
     return lx.tok.text
+}
+
+//! The regex a rule's `group` calls re-run on the token: the rule's pattern anchored at the token's
+//! end, so the match it finds covers the whole token.
+def flex_group_pattern(pattern : string) : string => "(?:{pattern})$"
+
+//! The initializer of the module global holding a rule's group regex.
+def flex_group_regex(pattern : string) : Regex => <- regex_compile(flex_group_pattern(pattern))
+
+//! the groups of the current token through `re`, run on the first call for the token and kept
+//! for the next ones; group 0 is the token itself
+def private flex_groups_of(var lx : FlexLexer; var re : Regex) {
+    let key = intptr(unsafe(addr(re)))
+    return if (lx.groups_re == key && lx.groups_start == lx.tok.start)
+    lx.groups_re = key
+    lx.groups_start = lx.tok.start
+    for (g in re.groups) {
+        g._0 = range(-1, -1)
+    }
+    let matched = regex_match(re, text(lx), 0) == lx.tok.len
+    lx.groups |> resize(length(re.groups))
+    for (i, g in count(), re.groups) {
+        let span = g._0
+        lx.groups[i] = matched && span.x >= 0 ? range(span.x + lx.tok.start, span.y + lx.tok.start) : range(-1, -1)
+    }
+    lx.groups[0] = range(lx.tok.start, lx.tok.start + lx.tok.len)
+}
+
+//! `group(lx, index)` in a rule body: the text of capture group `index` of the token, "" when the
+//! group took no part in the match
+def flex_group(var lx : FlexLexer; var re : Regex; index : int) : string {
+    let span = flex_group_span(lx, re, index)
+    return span.y > span.x ? slice(lx.bytes, span.x, span.y) : ""
+}
+
+//! `group_span(lx, index)` in a rule body: the input bytes capture group `index` of the token
+//! covers, `range(0, 0)` when the group took no part in the match
+def flex_group_span(var lx : FlexLexer; var re : Regex; index : int) : range {
+    flex_groups_of(lx, re)
+    if (index < 0 || index >= length(lx.groups)) {
+        panic("group({index}): the rule's regex has {length(lx.groups) - 1} groups")
+    }
+    let span = lx.groups[index]
+    return span.x < 0 ? range(0, 0) : span
 }
 
 //! A length-bounded comparison of the matched text with `s`, no allocation.
