@@ -8,12 +8,14 @@ options indenting = 4
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
 //
 // `flex` (also `flex-inline`) is the default shape, the inline matcher with goto dispatch; the
-// other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out.
+// other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
+// `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`).
 //
-//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|probe|regex (--dump | --time N) files...
+//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N) files...
 
 require c_lexer
 require c_lexer_goto
+require c_lexer_reader
 require c_lexer_variants
 require daslib/regex
 require daslib/fio
@@ -195,6 +197,10 @@ def lex_flex(text : string; typedefs : table<string; int>; shape : string) : arr
         }
     } elif (shape == "table") {
         while (c_next_table(lx)) {
+            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+        }
+    } elif (shape == "reader") {
+        while (c_next_reader(lx)) {
             out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
         }
     } elif (shape == "goto-dgoto") {
