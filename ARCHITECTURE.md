@@ -15,7 +15,8 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
   equivalence classes, subset construction, the rule an accepting state carries. Knows nothing of
   source code or macros.
 - `flex/flex.das` - the run-time scanner state (`FlexLexer`, `FlexToken`), the actions a rule body
-  calls (`emit`, `begin`, `text`, `text_is`), the error text (`flex_error_text`), and the
+  calls (`emit`, `begin`, `text`, `text_is`), the capture-group re-match behind `group` and
+  `group_span` (`flex_group`, `flex_group_span`, `flex_group_regex`), the error text (`flex_error_text`), and the
   matcher and position tracking of the `matcher="call"` shape (`flex_match_table`,
   `flex_consume`). No regex, no AST.
 - `flex/flex_macro.das` - the `[flex]` function annotation and `[flex_text]`, the one the reader's
@@ -27,7 +28,8 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
 - `examples/c_lexer/` - the C11 lexer on dasFlex (`c_lexer.das`), its goto-mode twin, the same rules
   in `%flex~` form (`c_lexer_reader.das`), a demo and the comparison and timing driver.
 - `tests/` - the package's dastest tests.
-- `tutorials/` - the JSON lexer as `[flex]` rules (01) and as `%flex~` text (02).
+- `tutorials/` - the JSON lexer as `[flex]` rules (01) and as `%flex~` text (02), a config lexer
+  reading capture groups (03).
 
 ## One automaton per rule set {#one-automaton}
 
@@ -114,6 +116,38 @@ that does not emit is a skip and the loop continues; `begin(lx, "NAME")` switche
 condition, the macro replacing the name with its index at compile time. The matched text is a
 byte span (`tok.start`, `tok.len`) until `text()` is asked for a string.
 
+## Capture groups by re-match {#groups}
+
+`lx |> group(n)` in a rule body is the text of capture group `n` of the token and
+`lx |> group_span(n)` its byte range in the input (`range(0, 0)` and "" for a group that takes no
+part in the match, group 0 the token itself). The automaton and every token stay as they are: the
+groups are the rule's own regex, run once over the token's span on request. The rewrite that turns
+`emit` into field writes turns these calls into `flex_group(lx, re, n)` / `flex_group_span(lx, re,
+n)`, where `re` is a private module global the macro adds only for a rule whose body calls `group`
+or `group_span`, initialized from the rule's pattern wrapped as `(?:pattern)$` when the module's
+globals initialize. The anchor makes the backtracking matcher of `daslib/regex` find a match that
+covers the whole token - the one the automaton accepted - rather than the first shorter one an
+alternation or an optional tail would give.
+
+The first call on a token runs that regex over the token's text (the cached `text()` string) and
+copies the spans, moved to input offsets, into `FlexLexer.groups`; `groups_re` (the regex's address)
+and `groups_start` (the token's `tok.start`) mark whose groups they are, so the next calls on the
+same token read the copy and a call on the next token, or through another rule's regex, matches
+again. The cost is paid only by rules that ask, once per token: a rule without group calls gets no
+regex, no global and no code, and the scanner loop does not touch the group fields.
+
+A rule whose body calls `group` while its regex has no capture group, or that asks for a constant
+index past its last group, fails the compile at the rule's line; the macro compiles the anchored
+pattern once to count them. The groups inherit `daslib/regex`'s matching semantics, quirks
+included: where it takes a greedy quantifier lazily, a group can come out shorter than a greedy
+engine would make it while the token stays the one the automaton found (`tests/flex_tests.das`
+holds the case).
+
+A tagged DFA (re2c's TDFA) is the single-pass alternative: tags on the automaton's transitions
+record group boundaries while the token is read. It would put tag bookkeeping into the scanner's
+inner loop and the table builder for every rule set, against one extra match per token for the rules
+that ask; it is the parked path.
+
 ## Two front ends, one back end {#reader}
 
 `[flex]` reads its rules from `rule` and `condition` calls; `%flex~ name : Enum ... %%` reads them
@@ -126,8 +160,9 @@ of the `%flex~ ... %%` text: a function `def name(var lx : FlexLexer) : bool` an
 `[flex_text(tokens, conditions, mode, dispatch, matcher)]` whose body holds one
 `rule("regex", "conditions") { action }` per rule line. The actions are therefore ordinary daslang,
 parsed and type-checked like any other code, and `[flex_text]` rewrites `emit(NAME)` into
-`emit(lx, Enum.NAME)`, `emit(expr)` into `emit(lx, expr)` and `begin(NAME)` into the condition's
-index. The source keeps one output line per input line, a multi-line action included, and the
+`emit(lx, Enum.NAME)`, `emit(expr)` into `emit(lx, expr)`, `begin(NAME)` into the condition's
+index and `group(n)` / `group_span(n)` into the calls `#groups` describes. A definition `{NAME}`
+expands as a non-capturing group `(?:...)`, so `group(n)` counts the parentheses the rule writes. The source keeps one output line per input line, a multi-line action included, and the
 parser is told it starts at the reader's line in the user's file, so a regex, condition or token
 error lands on the line the rule was written on.
 
@@ -146,8 +181,7 @@ it by accident.
 
 ## Not carried by this version {#not-carried}
 
-- Capture groups: a rule body sees the whole match only. Flex has no submatch either; when needed,
-  tagged DFA (re2c's TDFA) is the shape that keeps one pass.
+- Capture groups in one pass: `group` re-matches the token (`#groups`); a tagged DFA is not built.
 - Trailing context (`r/s`) and anchors.
 - flex's `|` action (the next rule's action), `REJECT`, `yymore` and `%array`/`%pointer` in the
   `%flex~` form; a brace-less action is one line with no comment.
