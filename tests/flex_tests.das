@@ -314,3 +314,89 @@ def test_symbols_table(t : T?) {
     }
     t |> equal(words, ["type", "name"])
 }
+
+[flex(mode = "table")]
+def merge_table(var lx : FlexLexer) : bool {
+    rule("ab|cb") {
+        lx |> emit(1)
+    }
+    rule("[0-9]+") {
+        lx |> emit(2)
+    }
+    rule("[0-9]+x") {
+        lx |> emit(3)
+    }
+    rule(" +") {
+    }
+}
+
+[flex(mode = "goto")]
+def merge_goto(var lx : FlexLexer) : bool {
+    rule("ab|cb") {
+        lx |> emit(1)
+    }
+    rule("[0-9]+") {
+        lx |> emit(2)
+    }
+    rule("[0-9]+x") {
+        lx |> emit(3)
+    }
+    rule(" +") {
+    }
+}
+
+def merge_stream(src : string; use_goto : bool) : array<string> {
+    var lx : FlexLexer
+    flex_open(lx, src, "t.txt")
+    var out : array<string>
+    while (use_goto ? merge_goto(lx) : merge_table(lx)) {
+        out |> push("{lx.tok.kind}:{text(lx)}")
+    }
+    out |> push(lx.err)
+    return <- out
+}
+
+require flex/flex_regex
+require flex/flex_dfa
+
+def state_counts(rules : array<FlexRule>; ncond : int) : tuple<before : int; after : int> {
+    let n <- build_nfa(rules, ncond)
+    let raw <- build_tables(n)
+    let t <- flex_tables(rules, ncond)
+    return (before = raw.nstates, after = t.nstates)
+}
+
+[test(description = "a rule set whose subset construction yields equivalent states lexes the same tokens after minimization")]
+def test_minimized_token_stream(t : T?) {
+    let want <- ["1:ab", "1:cb", "2:12", "3:7x", "2:0", "1:cb", "t.txt:1:17: unexpected 'a'"]
+    let src = "ab cb 12 7x 0cb a"
+    t |> equal(merge_stream(src, false), want)
+    t |> equal(merge_stream(src, true), want)
+}
+
+[test(description = "minimization merges equivalent states down to the hand-computed minimum and keeps the tables dense")]
+def test_minimized_state_counts(t : T?) {
+    let alt = state_counts([FlexRule(pattern = "ab|cb")], 1)
+    t |> equal(alt.after, 3)
+    t |> success(alt.after < alt.before)
+    let num = state_counts([FlexRule(pattern = "[0-9]+"), FlexRule(pattern = "[0-9]+x")], 1)
+    t |> equal(num.after, 3)
+    t |> success(num.after < num.before)
+    let tb <- flex_tables([FlexRule(pattern = "[0-9]+"), FlexRule(pattern = "[0-9]+x")])
+    t |> equal(tb.accept, [-1, 0, 1])
+    t |> equal(length(tb.next), tb.nstates * tb.nclasses)
+    t |> equal(length(tb.class_of), 256)
+    for (nx in tb.next) {
+        t |> success(nx >= -1 && nx < tb.nstates)
+    }
+}
+
+[test(description = "start states of two conditions merge when their languages coincide and stay apart when they differ")]
+def test_minimized_start_states(t : T?) {
+    let same <- flex_tables([FlexRule(pattern = "ab|cb", conditions = [0, 1])], 2)
+    t |> equal(same.nstates, 3)
+    t |> equal(same.start, [0, 0])
+    let diff <- flex_tables([FlexRule(pattern = "ab|cb", conditions = [0, 1]), FlexRule(pattern = "d", conditions = [0])], 2)
+    t |> equal(diff.nstates, 5)
+    t |> equal(diff.start, [0, 1])
+}
