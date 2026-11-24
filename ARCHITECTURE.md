@@ -64,10 +64,10 @@ condition fails the compile with the rule's text in the message.
 
 ## Two scanner shapes {#two-shapes}
 
-`mode="table"` (the default) drives the DFA from the globals; `mode="goto"` emits it as
-straight-line code - a label per state, a byte read, range tests per class and a `goto` to the next
-state - the way re2c and Ragel generate scanners. Table mode is the default because the generated
-function stays small whatever the rule set.
+`mode="table"` drives the DFA from the globals; `mode="goto"` emits it as straight-line code - a
+label per state, a byte read, range tests per class and a `goto` to the next state - the way re2c and
+Ragel generate scanners. The default follows the tier (below): the table function stays small whatever
+the rule set, the goto code is what LLVM folds best.
 
 In table mode `matcher="inline"` (the default) emits the byte loop into the scanner itself, through
 raw pointers, over one merged table whose entry is `next * 256 + accept(next) + 1`: one load per
