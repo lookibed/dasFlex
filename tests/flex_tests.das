@@ -113,6 +113,204 @@ def mini_call(var lx : FlexLexer) : bool {
     }
 }
 
+[flex(mode = "table", dispatch = "if")]
+def shape_table_if(var lx : FlexLexer) : bool {
+    rule("if") {
+        lx |> emit(TTok.IF)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        let k = TTok.IDENT
+        lx |> emit(k)
+    }
+    rule("[0-9]+") {
+        let k = TTok.NUM
+        lx |> emit(k)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
+        let k = TTok.PUNCT
+        lx |> emit(k)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(mode = "table", dispatch = "goto")]
+def shape_table_goto(var lx : FlexLexer) : bool {
+    rule("if") {
+        lx |> emit(TTok.IF)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        let k = TTok.IDENT
+        lx |> emit(k)
+    }
+    rule("[0-9]+") {
+        let k = TTok.NUM
+        lx |> emit(k)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
+        let k = TTok.PUNCT
+        lx |> emit(k)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(mode = "table", dispatch = "tree")]
+def shape_table_tree(var lx : FlexLexer) : bool {
+    rule("if") {
+        lx |> emit(TTok.IF)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        let k = TTok.IDENT
+        lx |> emit(k)
+    }
+    rule("[0-9]+") {
+        let k = TTok.NUM
+        lx |> emit(k)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
+        let k = TTok.PUNCT
+        lx |> emit(k)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(mode = "goto", dispatch = "if")]
+def shape_goto_if(var lx : FlexLexer) : bool {
+    rule("if") {
+        lx |> emit(TTok.IF)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        let k = TTok.IDENT
+        lx |> emit(k)
+    }
+    rule("[0-9]+") {
+        let k = TTok.NUM
+        lx |> emit(k)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
+        let k = TTok.PUNCT
+        lx |> emit(k)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(mode = "goto", dispatch = "goto")]
+def shape_goto_goto(var lx : FlexLexer) : bool {
+    rule("if") {
+        lx |> emit(TTok.IF)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        let k = TTok.IDENT
+        lx |> emit(k)
+    }
+    rule("[0-9]+") {
+        let k = TTok.NUM
+        lx |> emit(k)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
+        let k = TTok.PUNCT
+        lx |> emit(k)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
+[flex(mode = "goto", dispatch = "tree")]
+def shape_goto_tree(var lx : FlexLexer) : bool {
+    rule("if") {
+        lx |> emit(TTok.IF)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        let k = TTok.IDENT
+        lx |> emit(k)
+    }
+    rule("[0-9]+") {
+        let k = TTok.NUM
+        lx |> emit(k)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
+        let k = TTok.PUNCT
+        lx |> emit(k)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+}
+
 [flex]
 def with_inclusive(var lx : FlexLexer) : bool {
     rule("[a-z]+") {
@@ -154,6 +352,18 @@ def next_of(var lx : FlexLexer; shape : string) : bool {
         return mini_goto(lx)
     } elif (shape == "call") {
         return mini_call(lx)
+    } elif (shape == "table_if") {
+        return shape_table_if(lx)
+    } elif (shape == "table_goto") {
+        return shape_table_goto(lx)
+    } elif (shape == "table_tree") {
+        return shape_table_tree(lx)
+    } elif (shape == "goto_if") {
+        return shape_goto_if(lx)
+    } elif (shape == "goto_goto") {
+        return shape_goto_goto(lx)
+    } elif (shape == "goto_tree") {
+        return shape_goto_tree(lx)
     }
     return mini(lx)
 }
@@ -287,6 +497,15 @@ def test_line_column_equivalence(t : T?) {
     for (shape in ["inline", "goto", "call"]) {
         var inscope bad <- stream_of("a\n §", shape)
         t |> equal(bad[length(bad) - 1], "t.txt:2:2: unexpected '§'")
+    }
+}
+
+[test(description = "two rule bodies that declare the same local compile and lex in every mode and dispatch shape")]
+def test_rule_body_scopes(t : T?) {
+    let src = "if (x1 == 42) /* c * / */ y"
+    let want <- stream_of(src, "goto")
+    for (shape in ["table_if", "table_goto", "table_tree", "goto_if", "goto_goto", "goto_tree"]) {
+        t |> equal(stream_of(src, shape), want)
     }
 }
 

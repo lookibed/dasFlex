@@ -314,6 +314,7 @@ def private regex_global(name, pattern : string; at : LineInfo; var errors : das
 
 //! the dispatch after a match, in one of three shapes: a chain of `if (rule == i)`, a computed
 //! `goto` into a label per rule (labels `base .. base + nrules`), or a binary tree of `if (rule < m)`
+[arch(at="../ARCHITECTURE.md#rule-bodies")]
 def private make_arms(spec : FlexSpec; rule_var, dispatch : string; base : int;
                       at : LineInfo) : array<ExpressionPtr> {
     var arms : array<ExpressionPtr>
@@ -322,21 +323,17 @@ def private make_arms(spec : FlexSpec; rule_var, dispatch : string; base : int;
         arms |> push <| qmacro_block() {
             goto $i(rule_var) + $v(base)
         }
+        mark_generated(arms[0])
         let done = base + length(spec.arms)
         for (arm in spec.arms) {
             var lab : ExpressionPtr = new ExprLabel(at = at, labelName = base + arm.rule)
             arms |> emplace(lab)
-            for (s in arm.body) {
-                arms |> push(clone_expression(s))
-            }
+            arms |> push(arm_block(spec, arm.rule))
             var jump : ExpressionPtr = new ExprGoto(at = at, labelName = done)
             arms |> emplace(jump)
         }
         var lab_done : ExpressionPtr = new ExprLabel(at = at, labelName = done)
         arms |> emplace(lab_done)
-        for (e in arms) {
-            mark_generated(e)
-        }
     } elif (dispatch == "tree") {
         arms |> push(make_arm_tree(spec, rule_var, 0, length(spec.arms)))
     } else {
@@ -346,6 +343,16 @@ def private make_arms(spec : FlexSpec; rule_var, dispatch : string; base : int;
         }
     }
     return <- arms
+}
+
+//! the body of rule `rule` as a block of its own
+def private arm_block(spec : FlexSpec; rule : int) : ExpressionPtr {
+    var blk = qmacro_block() {
+    }
+    for (s in spec.arms[rule].body) {
+        (blk as ExprBlock).list |> push(clone_expression(s))
+    }
+    return blk
 }
 
 def private make_arm_if(spec : FlexSpec; rule_var : string; rule : int) : ExpressionPtr {
@@ -364,15 +371,7 @@ def private make_arm_if(spec : FlexSpec; rule_var : string; rule : int) : Expres
 
 //! rules `lo .. hi-1` as a balanced tree of `if (rule < mid)`; a leaf is the rule's body
 def private make_arm_tree(spec : FlexSpec; rule_var : string; lo, hi : int) : ExpressionPtr {
-    if (hi - lo == 1) {
-        var leaf = qmacro_block() {
-        }
-        var blk = leaf as ExprBlock
-        for (s in spec.arms[lo].body) {
-            blk.list |> push(clone_expression(s))
-        }
-        return leaf
-    }
+    return arm_block(spec, lo) if (hi - lo == 1)
     let mid = (lo + hi) / 2
     var node = qmacro_block() {
         if ($i(rule_var) < $v(mid)) {

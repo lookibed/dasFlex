@@ -55,6 +55,9 @@ defect** - the two forms of a lexer must give the same tables and tokens (`ARCHI
 makes the reader's text end anywhere but at the first `%%`, is a defect** - diagnostics would land
 on the wrong line, and the formatter would reformat rule text as code.
 
+**A diff that makes a dispatch shape splice a rule body into the scanner without a scope of its own
+is a defect** - two rules declaring the same local would collide (`ARCHITECTURE.md#rule-bodies`).
+
 **A diff that makes a rule whose body has no `group` or `group_span` call pay for groups - a regex
 compiled, a global added, or a regex run for it, or a group field written in the scanner loop - is a
 defect** - the re-match is paid only by the rules that ask (`ARCHITECTURE.md#groups`).

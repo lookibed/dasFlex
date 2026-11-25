@@ -111,7 +111,9 @@ module compiled for the interpreter is compiled again, not reused, when the same
 
 A rule's block is spliced into the generated function at its dispatch label or branch, so it sees
 the function's parameter - the lexer - under the name the user gave it, and anything else the
-function's module makes visible. `emit(lx, kind)` records the token kind and ends the scan; a body
+function's module makes visible. Every dispatch shape gives the block a scope of its own - under a
+computed `goto` a nested block after the rule's label, under the `if` chain and the tree the branch
+- so two rules may declare the same local. `emit(lx, kind)` records the token kind and ends the scan; a body
 that does not emit is a skip and the loop continues; `begin(lx, "NAME")` switches the start
 condition, the macro replacing the name with its index at compile time. The matched text is a
 byte span (`tok.start`, `tok.len`) until `text()` is asked for a string.
