@@ -844,12 +844,13 @@ def run(shape : int; src : string; var out : string?) {
 let private REF_SHAPE = "mode = \"table\", matcher = \"call\", dispatch = \"if\""
 
 //! a module stamping the `[flex]` body `rules` once per entry of `shapes` as `lex0`, `lex1`, ...,
-//! and the `run` of `STAMP_RUN` over them
+//! and the `run` of `STAMP_RUN` over them; an empty shape is `[flex]` with no arguments
 def private stamped_module(rules : string; shapes : array<string>) : string {
     return build_string() $(var w) {
         w |> write("options gen2\nrequire flex/flex_macro\nrequire daslib/strings_boost\n")
         for (i, shape in count(), shapes) {
-            w |> write("[flex({shape})]\ndef lex{i}(var lx : FlexLexer) : bool \{\n{rules}\n\}\n")
+            let args = empty(shape) ? "" : "({shape})"
+            w |> write("[flex{args}]\ndef lex{i}(var lx : FlexLexer) : bool \{\n{rules}\n\}\n")
         }
         w |> write("def lex_by(shape : int; var lx : FlexLexer) : bool \{\n    return ")
         for (i in range(length(shapes))) {
@@ -859,16 +860,18 @@ def private stamped_module(rules : string; shapes : array<string>) : string {
     }
 }
 
-//! compiles `rules` stamped once per shape as the virtual file `name` and lexes `src` with each
-//! lexer: the issues, or "" and the stream of every shape in the order of `shapes`
-def private shape_streams(name, rules : string; shapes : array<string>;
-                          src : string) : tuple<issues : string; streams : array<array<string>>> {
+//! compiles `rules` stamped once per shape as the virtual file `name`, for the JIT tier when `jit`,
+//! and lexes `src` with each lexer: the issues, or "" and the stream of every shape in the order of
+//! `shapes`
+def private shape_streams(name, rules : string; shapes : array<string>; src : string;
+                          jit : bool = false) : tuple<issues : string; streams : array<array<string>>> {
     var res : tuple<issues : string; streams : array<array<string>>>
     var inscope access <- make_file_access("")
     set_file_source(access, name, stamped_module(rules, shapes))
     using() $(var mg : ModuleGroup) {
         using() $(var cop : CodeOfPolicies) {
             cop.threadlock_context = true
+            cop.jit_enabled = jit
             compile_file(name, access, unsafe(addr(mg)), cop) $(ok; program; issues) {
                 res.issues = string(issues)
                 return if (!ok)
@@ -889,14 +892,19 @@ def private shape_streams(name, rules : string; shapes : array<string>;
     return <- res
 }
 
-[test(description = "the 254-rule cap binds the inline table matcher only: goto mode lexes 261 rules, table mode refuses them")]
-def test_many_rules(t : T?) {
-    let rules = build_string() $(var w) {
+//! 260 keyword rules `k0` .. `k259` emitting their index, then a blank rule
+def private many_rules() : string {
+    return build_string() $(var w) {
         for (i in range(260)) {
             w |> write("    rule(\"k{i}\") \{ lx |> emit({i}) \}\n")
         }
         w |> write("    rule(\" +\") \{ \}\n")
     }
+}
+
+[test(description = "the 254-rule cap binds the inline table matcher only: goto mode lexes 261 rules, table mode refuses them")]
+def test_many_rules(t : T?) {
+    let rules = many_rules()
     let in_goto <- shape_streams("many_goto.das", rules, ["mode = \"goto\""], "k7 k259 k130")
     t |> equal(in_goto.issues, "")
     t |> equal(in_goto.streams, [["7@1:1:k7", "259@1:4:k259", "130@1:9:k130", ""]])
@@ -943,5 +951,27 @@ def test_newline_class_inside_a_set(t : T?) {
     t |> equal(res.issues, "")
     for (stream in res.streams) {
         t |> equal(stream, ["1@1:1:a b\nc", "2@2:2:;", ""])
+    }
+}
+
+[test(description = "with no mode the shape follows the tier: the interpreter's table default refuses 261 rules at the inline matcher's cap, the JIT's goto default lexes them")]
+def test_tier_default_mode(t : T?) {
+    let rules = many_rules()
+    let interp <- shape_streams("tier_interp.das", rules, [""], "k7 k259")
+    t |> success(find(interp.issues, "at most 254 rules") >= 0, interp.issues)
+    let jit <- shape_streams("tier_jit.das", rules, [""], "k7 k259", true)
+    t |> equal(jit.issues, "")
+    t |> equal(jit.streams, [["7@1:1:k7", "259@1:4:k259", ""]])
+}
+
+[test(description = "a mode, dispatch or matcher value the annotation does not know fails the compile naming the value and the ones it takes")]
+def test_bad_shape_values(t : T?) {
+    let rules = "    rule(\"a\") \{ lx |> emit(1) \}\n"
+    for (shape, want in ["mode = \"tabel\"", "dispatch = \"switch\"", "matcher = \"loop\""],
+            ["[flex] mode is table or goto, not tabel",
+             "[flex] dispatch is if, goto or tree, not switch",
+             "[flex] matcher is call or inline, not loop"]) {
+        let res <- shape_streams("bad_shape.das", rules, [shape], "a")
+        t |> success(find(res.issues, want) >= 0, res.issues)
     }
 }
