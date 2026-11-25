@@ -249,3 +249,33 @@ def test_action_error_lines(t : T?) {
         t |> success(find(issues, "flex_macro.das") < 0, issues)
     }
 }
+
+[test(description = "a start condition declared twice, INITIAL included, fails the compile at the second declaration, in both forms")]
+def test_duplicate_conditions(t : T?) {
+    let head = "options gen2\nrequire flex/flex_macro\n[flex]\ndef bad(var lx : FlexLexer) : bool \{\n"
+    let rule_a = "    rule(\"a\") \{\n        lx |> emit(1)\n    \}\n"
+    t |> run("[flex]: a condition declared twice") @(t : T?) {
+        let cond_c = "    condition(\"C\", exclusive) \{\n        rule(\"b\") \{\n        \}\n    \}\n"
+        let issues = compile_issues("d1.das", head + rule_a + cond_c + cond_c + "\}\n")
+        t |> success(find(issues, "a start condition of that name is declared already") >= 0,
+                     issues)
+        t |> success(find(issues, "d1.das:12:") >= 0, issues)
+    }
+    t |> run("[flex]: INITIAL declared") @(t : T?) {
+        let cond_i = "    condition(\"INITIAL\", inclusive) \{\n        rule(\"b\") \{\n        \}\n    \}\n"
+        let issues = compile_issues("d2.das", head + rule_a + cond_i + "\}\n")
+        t |> success(find(issues, "INITIAL is every lexer's default start condition") >= 0, issues)
+        t |> success(find(issues, "d2.das:8:") >= 0, issues)
+    }
+    t |> run("reader: a condition declared twice, INITIAL declared") @(t : T?) {
+        let rules = "\"a\"  \{ emit(A) \}\n"
+        var issues = compile_issues("d3.das", reader_module("%x C\n%s C\n", rules))
+        t |> success(find(issues, "%s C: a start condition of that name is declared already") >= 0,
+                     issues)
+        t |> success(find(issues, "d3.das:8:") >= 0, issues)
+        issues = compile_issues("d4.das", reader_module("%x INITIAL\n", rules))
+        t |> success(find(issues, "INITIAL is every lexer's default start condition") >= 0, issues)
+        t |> success(find(issues, "d4.das:7:") >= 0, issues)
+    }
+}
+

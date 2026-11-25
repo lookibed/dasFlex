@@ -273,6 +273,12 @@ def private header(var s : RScan) : tuple<name : string; tokens : string> {
     return (name = name, tokens = tokens)
 }
 
+//! why a start condition named `name` cannot be declared again
+def duplicate_condition(name : string) : string {
+    return "INITIAL is every lexer's default start condition, declared already" if (name == "INITIAL")
+    return "a start condition of that name is declared already"
+}
+
 struct private Definitions {
     defs : table<string; string>
     conditions : array<string>
@@ -292,7 +298,13 @@ def private definition_line(var s : RScan; var out : Definitions; line : string)
     if (head == "%x" || head == "%s") {
         out.conditions |> reserve(length(out.conditions) + length(items))
         for (i in range(1, length(items))) {
-            out.conditions |> push("{items[i]}:{head == "%x" ? "x" : "s"}")
+            let name = items[i]
+            if (name == "INITIAL" || out.conditions |> has_value("{name}:x")
+                || out.conditions |> has_value("{name}:s")) {
+                fail(s, "{head} {name}: {duplicate_condition(name)}")
+                return
+            }
+            out.conditions |> push("{name}:{head == "%x" ? "x" : "s"}")
         }
     } elif (head == "%option") {
         out.shape_args |> reserve(length(out.shape_args) + length(items))

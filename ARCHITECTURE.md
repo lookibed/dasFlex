@@ -73,7 +73,8 @@ once and emits them as `to_array_move([...])` initialisers of private module glo
 the function, so a program pays nothing for the construction at run time and the generated function
 is ordinary code the interpreter, the JIT and the AOT compiler all see. A failed regex, a form a
 DFA cannot carry (anchors, word boundaries, lookahead, lazy quantifiers) or an unknown start
-condition fails the compile with the rule's text in the message.
+condition fails the compile with the rule's text in the message; a start condition declared twice,
+`INITIAL` included, fails it at the second declaration, in both front ends.
 
 ## Two scanner shapes {#two-shapes}
 

@@ -206,7 +206,8 @@ def private collect_rule(var spec : FlexSpec; call : ExprCall?; nargs : int; con
     spec.arms |> emplace(arm)
 }
 
-//! first pass: the condition names, so a `begin` may name a condition declared below it
+//! first pass: the condition names, so a `begin` may name a condition declared below it; a name
+//! declared twice, `INITIAL` included, fails at the second declaration
 def private collect_conditions(var spec : FlexSpec; body : ExprBlock?) {
     spec.cond_names |> push("INITIAL")
     spec.inclusive |> push(false)
@@ -223,7 +224,12 @@ def private collect_conditions(var spec : FlexSpec; body : ExprBlock?) {
                 fail_at(spec, "condition kind is exclusive or inclusive, not {kind}", call)
                 return
             }
-            spec.cond_names |> push(string((call.arguments[0] as ExprConstString).value))
+            let name = string((call.arguments[0] as ExprConstString).value)
+            if (find_index(spec.cond_names, name) >= 0) {
+                fail_at(spec, "condition(\"{name}\"): {duplicate_condition(name)}", call)
+                return
+            }
+            spec.cond_names |> push(name)
             spec.inclusive |> push(kind == "inclusive")
         }
     }
