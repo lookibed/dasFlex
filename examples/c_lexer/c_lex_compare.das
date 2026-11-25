@@ -12,6 +12,7 @@ options indenting = 4
 // `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`).
 //
 //   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N) files...
+//   (`-- --help` lists the flags)
 
 require c_lexer
 require c_lexer_goto
@@ -19,6 +20,7 @@ require c_lexer_reader
 require c_lexer_variants
 require daslib/regex
 require daslib/fio
+require daslib/clargs
 require daslib/strings_boost
 require strings
 
@@ -429,16 +431,6 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
     return <- out
 }
 
-def read_file(path : string) : string {
-    var text = ""
-    fopen(path, "rb") $(f) {
-        if (f != null) {
-            text = fread(f)
-        }
-    }
-    return text
-}
-
 def lex_mode(mode : string; text : string; typedefs : table<string; int>;
              var rules : array<ReRule>) : array<Tok> {
     if (mode == "probe") {
@@ -450,35 +442,27 @@ def lex_mode(mode : string; text : string; typedefs : table<string; int>;
     }
 }
 
+[CommandLineArgs]
+struct CompareArgs {
+    @clarg_doc = "the lexer: flex, table, flex-call, flex-dgoto, flex-dtree, goto, goto-dgoto, reader, probe or regex"
+    mode : string = "flex"
+    @clarg_doc = "print NAME, text and line per token, tab-separated"
+    dump : bool
+    @clarg_doc = "lex each file N times and print the median, min and max milliseconds"
+    time : int
+    @clarg_positional
+    @clarg_doc = "the preprocessed C files"
+    files : array<string>
+}
+
 [export]
-def main() {
-    let args <- get_command_line_arguments()
-    var mode = "flex"
-    var dump = false
-    var passes = 0
-    var files : array<string>
-    var after_sep = false
-    var i = 0
-    while (i < length(args)) {
-        let a = args[i]
-        if (a == "--") {
-            after_sep = true
-        } elif (after_sep && a == "--mode") {
-            i++
-            mode = args[i]
-        } elif (after_sep && a == "--dump") {
-            dump = true
-        } elif (after_sep && a == "--time") {
-            i++
-            passes = to_int(args[i])
-        } elif (after_sep) {
-            files |> push(a)
-        }
-        i++
-    }
+def main() : int {
+    var args = CompareArgs()
+    let rc = parse_args_with_help(args, "c_lex_compare")
+    return rc if (rc >= 0)
     var rules <- regex_rules()
-    for (path in files) {
-        let text = read_file(path)
+    for (path in args.files) {
+        let text = fread(path)
         if (empty(text)) {
             print("{path}: empty or unreadable\n")
             continue
@@ -487,28 +471,29 @@ def main() {
         // lexer hack), so every mode sees the same table
         var inscope typedefs : table<string; int>
         typedefs["__builtin_va_list"] = 1
-        var inscope first_raw <- lex_mode(mode, text, typedefs, rules)
+        var inscope first_raw <- lex_mode(args.mode, text, typedefs, rules)
         var inscope first_toks <- filter_tokens(first_raw, typedefs)
-        var inscope raw <- lex_mode(mode, text, typedefs, rules)
+        var inscope raw <- lex_mode(args.mode, text, typedefs, rules)
         var inscope seed := typedefs
         var inscope toks <- filter_tokens(raw, seed)
-        if (dump) {
+        if (args.dump) {
             for (t in toks) {
                 print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\n")
             }
         } else {
-            print("{path}: {mode}: {length(toks)} tokens, {length(seed)} typedefs\n")
+            print("{path}: {args.mode}: {length(toks)} tokens, {length(seed)} typedefs\n")
         }
-        if (passes > 0) {
+        if (args.time > 0) {
             var inscope times : array<double>
-            times |> reserve(passes)
-            for (_k in range(passes)) {
+            times |> reserve(args.time)
+            for (_k in range(args.time)) {
                 let t0 = ref_time_ticks()
-                var inscope r <- lex_mode(mode, text, typedefs, rules)
+                var inscope r <- lex_mode(args.mode, text, typedefs, rules)
                 times |> push(double(get_time_usec(t0)) / 1000.0lf)
             }
             sort(times)
-            print("TIME {mode} {path} median_ms={times[length(times) / 2]} min={times[0]} max={times[length(times) - 1]} bytes={length(text)}\n")
+            print("TIME {args.mode} {path} median_ms={times[length(times) / 2]} min={times[0]} max={times[length(times) - 1]} bytes={length(text)}\n")
         }
     }
+    return 0
 }
