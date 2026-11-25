@@ -22,6 +22,7 @@ require daslib/regex
 require daslib/fio
 require daslib/clargs
 require daslib/strings_boost
+require daslib/utf8_utils
 require strings
 
 struct Tok {
@@ -30,21 +31,75 @@ struct Tok {
     line : int
 }
 
-def is_ident_start(c : int) : bool => is_alpha(c) || c == '_'
-def is_ident_char(c : int) : bool => is_alpha(c) || is_number(c) || c == '_'
+def is_ident_start(c : int) : bool => is_alpha(c) || c == '_' || c == '$'
+def is_ident_char(c : int) : bool => is_alpha(c) || is_number(c) || c == '_' || c == '$'
+
+//! the byte length of the well-formed UTF-8 character past ASCII at `i`, 0 when there is none: no
+//! overlong form, no surrogate, nothing past U+10FFFF
+def utf8_len(d : array<uint8>#; i : int) : int {
+    let b = int(d[i])
+    let n = b >= 0xC2 && b <= 0xDF ? 2 : b >= 0xE0 && b <= 0xEF ? 3 : b >= 0xF0 && b <= 0xF4 ? 4 : 0
+    return 0 if (n == 0 || i + n > length(d))
+    let lo = int(b == 0xE0 ? 0xA0 : b == 0xF0 ? 0x90 : 0x80)
+    let hi = int(b == 0xED ? 0x9F : b == 0xF4 ? 0x8F : 0xBF)
+    let second = int(d[i + 1])
+    return 0 if (second < lo || second > hi)
+    for (k in range(2, n)) {
+        return 0 if ((int(d[i + k]) & 0xC0) != 0x80)
+    }
+    return n
+}
+
+//! the byte length of the universal character name at `i` (`\uHHHH`, `\UHHHHHHHH`), 0 when there is none
+def ucn_len(d : array<uint8>#; i : int) : int {
+    return 0 if (int(d[i]) != '\\' || i + 1 >= length(d))
+    let digits = int(d[i + 1]) == 'u' ? 4 : int(d[i + 1]) == 'U' ? 8 : 0
+    return 0 if (digits == 0 || i + 2 + digits > length(d))
+    for (k in range(digits)) {
+        return 0 if (!is_hex(int(d[i + 2 + k])))
+    }
+    return digits + 2
+}
+
+//! the bytes of the identifier character at `i` - ASCII, a UCN or UTF-8 past ASCII - 0 when none
+//! starts there; a digit only when `!first`
+def ident_unit(d : array<uint8>#; i : int; first : bool) : int {
+    let c = int(d[i])
+    if (c < 0x80 && c != '\\') {
+        return (first ? is_ident_start(c) : is_ident_char(c)) ? 1 : 0
+    }
+    return c == '\\' ? ucn_len(d, i) : utf8_len(d, i)
+}
+
+//! the runtime's error text for the byte at `at` no rule takes
+def probe_error(text : string; at, line, col : int) : string {
+    var lx : FlexLexer
+    flex_open(lx, text)
+    lx.pos = at
+    lx.line = line
+    lx.col = col
+    return flex_error_text(lx)
+}
+
+let PUNCT1 = ";\{\},:=()[].&!~-+*/%<>^|?"
 
 //! the probe's hand-written lexer: raw tokens, no filter (keywords by table, typedef names by `typedefs`)
 def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // nolint:STYLE038 - the probe's lexer kept whole, as the reference
     var out : array<Tok>
     var line = 1
+    var line_start = 0
     peek_data(text) $(d) {  // nolint:STYLE037 - see the function
         let n = length(d)
         var i = 0
+        if (contains_utf8_bom(text)) {
+            i = 3
+        }
         while (i < n) {
             let c = int(d[i])
             if (c == '\n') {
                 line++
                 i++
+                line_start = i
                 continue
             }
             if (c == ' ' || c == '\t' || c == '\r' || c == '\f' || c == '\v') {
@@ -62,6 +117,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                 while (i + 1 < n && !(int(d[i]) == '*' && int(d[i + 1]) == '/')) {
                     if (int(d[i]) == '\n') {
                         line++
+                        line_start = i + 1
                     }
                     i++
                 }
@@ -75,9 +131,43 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                 continue
             }
             let start = i
-            if (is_ident_start(c)) {
-                while (i < n && is_ident_char(int(d[i]))) {
+            let u8_string = c == 'u' && i + 2 < n && int(d[i + 1]) == '8' && int(d[i + 2]) == '"'
+            if (c == '"' || c == '\'' || u8_string
+                || ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n
+                    && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))) {
+                if (c != '"' && c != '\'') {
+                    i += u8_string ? 2 : 1
+                }
+                let quote = int(d[i])
+                i++
+                while (i < n && int(d[i]) != quote) {
+                    if (int(d[i]) == '\\') {
+                        i++
+                    }
                     i++
+                }
+                i++
+                out |> emplace(
+                               Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
+                                   text = slice(d, start, i), line = line))
+                continue
+            }
+            if (ident_unit(d, i, true) > 0) {
+                var ascii = true
+                while (i < n) {
+                    if (is_ident_char(int(d[i]))) {
+                        i++
+                        continue
+                    }
+                    let unit = ident_unit(d, i, i == start)
+                    break if (unit == 0)
+                    ascii = false
+                    i += unit
+                }
+                i = ascii ? i : start + c_ident_prefix(d, start, i)
+                if (i == start) {
+                    print("{probe_error(text, start, line, start - line_start + 1)}\n")
+                    break
                 }
                 let word = slice(d, start, i)
                 var kind = int(CTok.IDENTIFIER)
@@ -115,26 +205,6 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                                    text = word, line = line))
                 continue
             }
-            if (c == '"' || c == '\''
-                || ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n
-                    && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))) {
-                if (c != '"' && c != '\'') {
-                    i++
-                }
-                let quote = int(d[i])
-                i++
-                while (i < n && int(d[i]) != quote) {
-                    if (int(d[i]) == '\\') {
-                        i++
-                    }
-                    i++
-                }
-                i++
-                out |> emplace(
-                               Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
-                                   text = slice(d, start, i), line = line))
-                continue
-            }
             if (i + 2 < n) {
                 let s3 = slice(d, i, i + 3)
                 var p3 = -1
@@ -158,6 +228,10 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                     i += 2
                     continue
                 }
+            }
+            if (find(PUNCT1, c) < 0) {
+                print("{probe_error(text, i, line, i - line_start + 1)}\n")
+                break
             }
             out |> emplace(Tok(kind = c, text = slice(d, i, i + 1), line = line))
             i++
@@ -188,7 +262,7 @@ def flex_tokens(var lx : FlexLexer; scan : block<(var lx : FlexLexer) : bool>) :
 def lex_flex(text : string; typedefs : table<string; int>; shape : string) : array<Tok> {
     var lx : FlexLexer
     lx.symbols := typedefs
-    flex_open(lx, text)
+    c_open(lx, text)
     var out : array<Tok>
     if (shape == "goto") {
         out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_goto(l)

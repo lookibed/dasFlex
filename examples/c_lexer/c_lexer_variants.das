@@ -22,7 +22,11 @@ def c_next_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("/\\*") {
         lx |> begin("COMMENT")
     }
-    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+    rule("[a-zA-Z_$\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u02FF\\u0370-\\u167F\\u1681-\\u180D\\u180F-\\u1DBF\\u1E00-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u20CF\\u2100-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE1F\\uFE30-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD][a-zA-Z_$0-9\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u167F\\u1681-\\u180D\\u180F-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("(?:[a-zA-Z_$\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})(?:[a-zA-Z_$0-9\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})*") {
+        return false if (!c_ident_cut(lx))
         lx |> emit(c_word_kind(lx))
     }
     rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
@@ -34,7 +38,7 @@ def c_next_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
         lx |> emit(CTok.I_CONSTANT)
     }
-    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))+'") {
         lx |> emit(CTok.I_CONSTANT)
     }
     rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
@@ -55,7 +59,7 @@ def c_next_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
         lx |> emit(CTok.F_CONSTANT)
     }
-    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))*\"") {
         lx |> emit(CTok.STRING_LITERAL)
     }
     rule("\\.\\.\\.") {
@@ -149,7 +153,11 @@ def c_next_dtree(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("/\\*") {
         lx |> begin("COMMENT")
     }
-    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+    rule("[a-zA-Z_$\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u02FF\\u0370-\\u167F\\u1681-\\u180D\\u180F-\\u1DBF\\u1E00-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u20CF\\u2100-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE1F\\uFE30-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD][a-zA-Z_$0-9\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u167F\\u1681-\\u180D\\u180F-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("(?:[a-zA-Z_$\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})(?:[a-zA-Z_$0-9\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})*") {
+        return false if (!c_ident_cut(lx))
         lx |> emit(c_word_kind(lx))
     }
     rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
@@ -161,7 +169,7 @@ def c_next_dtree(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
         lx |> emit(CTok.I_CONSTANT)
     }
-    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))+'") {
         lx |> emit(CTok.I_CONSTANT)
     }
     rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
@@ -182,7 +190,7 @@ def c_next_dtree(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
         lx |> emit(CTok.F_CONSTANT)
     }
-    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))*\"") {
         lx |> emit(CTok.STRING_LITERAL)
     }
     rule("\\.\\.\\.") {
@@ -276,7 +284,11 @@ def c_next_goto_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule 
     rule("/\\*") {
         lx |> begin("COMMENT")
     }
-    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+    rule("[a-zA-Z_$\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u02FF\\u0370-\\u167F\\u1681-\\u180D\\u180F-\\u1DBF\\u1E00-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u20CF\\u2100-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE1F\\uFE30-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD][a-zA-Z_$0-9\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u167F\\u1681-\\u180D\\u180F-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("(?:[a-zA-Z_$\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})(?:[a-zA-Z_$0-9\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})*") {
+        return false if (!c_ident_cut(lx))
         lx |> emit(c_word_kind(lx))
     }
     rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
@@ -288,7 +300,7 @@ def c_next_goto_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule 
     rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
         lx |> emit(CTok.I_CONSTANT)
     }
-    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))+'") {
         lx |> emit(CTok.I_CONSTANT)
     }
     rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
@@ -309,7 +321,7 @@ def c_next_goto_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule 
     rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
         lx |> emit(CTok.F_CONSTANT)
     }
-    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))*\"") {
         lx |> emit(CTok.STRING_LITERAL)
     }
     rule("\\.\\.\\.") {
@@ -403,7 +415,11 @@ def c_next_call(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list i
     rule("/\\*") {
         lx |> begin("COMMENT")
     }
-    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+    rule("[a-zA-Z_$\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u02FF\\u0370-\\u167F\\u1681-\\u180D\\u180F-\\u1DBF\\u1E00-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u20CF\\u2100-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE1F\\uFE30-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD][a-zA-Z_$0-9\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u167F\\u1681-\\u180D\\u180F-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("(?:[a-zA-Z_$\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})(?:[a-zA-Z_$0-9\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})*") {
+        return false if (!c_ident_cut(lx))
         lx |> emit(c_word_kind(lx))
     }
     rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
@@ -415,7 +431,7 @@ def c_next_call(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list i
     rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
         lx |> emit(CTok.I_CONSTANT)
     }
-    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))+'") {
         lx |> emit(CTok.I_CONSTANT)
     }
     rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
@@ -436,7 +452,7 @@ def c_next_call(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list i
     rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
         lx |> emit(CTok.F_CONSTANT)
     }
-    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))*\"") {
         lx |> emit(CTok.STRING_LITERAL)
     }
     rule("\\.\\.\\.") {
@@ -530,7 +546,11 @@ def c_next_table(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("/\\*") {
         lx |> begin("COMMENT")
     }
-    rule("[a-zA-Z_][a-zA-Z_0-9]*") {
+    rule("[a-zA-Z_$\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u02FF\\u0370-\\u167F\\u1681-\\u180D\\u180F-\\u1DBF\\u1E00-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u20CF\\u2100-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE1F\\uFE30-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD][a-zA-Z_$0-9\\u00A8\\u00AA\\u00AD\\u00AF\\u00B2-\\u00B5\\u00B7-\\u00BA\\u00BC-\\u00BE\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u00FF\\u0100-\\u167F\\u1681-\\u180D\\u180F-\\u1FFF\\u200B-\\u200D\\u202A-\\u202E\\u203F-\\u2040\\u2054\\u2060-\\u206F\\u2070-\\u218F\\u2460-\\u24FF\\u2776-\\u2793\\u2C00-\\u2DFF\\u2E80-\\u2FFF\\u3004-\\u3007\\u3021-\\u302F\\u3031-\\u303F\\u3040-\\uD7FF\\uF900-\\uFD3D\\uFD40-\\uFDCF\\uFDF0-\\uFE44\\uFE47-\\uFFFD\\U00010000-\\U0001FFFD\\U00020000-\\U0002FFFD\\U00030000-\\U0003FFFD\\U00040000-\\U0004FFFD\\U00050000-\\U0005FFFD\\U00060000-\\U0006FFFD\\U00070000-\\U0007FFFD\\U00080000-\\U0008FFFD\\U00090000-\\U0009FFFD\\U000A0000-\\U000AFFFD\\U000B0000-\\U000BFFFD\\U000C0000-\\U000CFFFD\\U000D0000-\\U000DFFFD\\U000E0000-\\U000EFFFD]*") {
+        lx |> emit(c_word_kind(lx))
+    }
+    rule("(?:[a-zA-Z_$\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})(?:[a-zA-Z_$0-9\\u0080-\\U0010FFFF]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})*") {
+        return false if (!c_ident_cut(lx))
         lx |> emit(c_word_kind(lx))
     }
     rule("0[xX][a-fA-F0-9]+(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
@@ -542,7 +562,7 @@ def c_next_table(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("0[0-7]*(((u|U)(l|L|ll|LL)?)|((l|L|ll|LL)(u|U)?))?") {
         lx |> emit(CTok.I_CONSTANT)
     }
-    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'") {
+    rule("(u|U|L)?'([^'\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))+'") {
         lx |> emit(CTok.I_CONSTANT)
     }
     rule("[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)?") {
@@ -563,7 +583,7 @@ def c_next_table(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
     rule("0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)?") {
         lx |> emit(CTok.F_CONSTANT)
     }
-    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"") {
+    rule("(u8|u|U|L)?\"([^\"\\\\\\n]|(\\\\([\\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))*\"") {
         lx |> emit(CTok.STRING_LITERAL)
     }
     rule("\\.\\.\\.") {
