@@ -6,7 +6,7 @@ options indenting = 4
 // `daslib/regex` tried rule by rule. `--dump` prints `NAME<TAB>text<TAB>line` per token after
 // the shared filter (GNU extension skipping, adjacent string literals joined, typedef tracking)
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
-// `--count` (with `--mode flex`) times the scanner alone: the lexer is opened outside the timer and
+// `--count` (with `--time N` and `--mode flex` or `flex-inline`) times the scanner alone: the lexer is opened outside the timer and
 // the loop counts tokens, with no token array and no `text()` per token.
 //
 // `flex` (also `flex-inline`) is the default shape, the inline matcher with goto dispatch; the
@@ -465,7 +465,7 @@ struct CompareArgs {
     dump : bool
     @clarg_doc = "lex each file N times and print the median, min and max milliseconds"
     time : int
-    @clarg_doc = "with --time and --mode flex: time the scanner alone, counting tokens (no token array, no text per token)"
+    @clarg_doc = "with --time and --mode flex or flex-inline: time the scanner alone, counting tokens (no token array, no text per token)"
     count : bool
     @clarg_positional
     @clarg_doc = "the preprocessed C files"
@@ -477,6 +477,10 @@ def main() : int {
     var args = CompareArgs()
     let rc = parse_args_with_help(args, "c_lex_compare")
     return rc if (rc >= 0)
+    if (args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline"))) {
+        print("usage: c_lex_compare -- --mode flex|flex-inline --time N --count files...\n")
+        return 1
+    }
     var rules <- regex_rules()
     for (path in args.files) {
         let text = fread(path)
@@ -500,11 +504,7 @@ def main() : int {
         } else {
             print("{path}: {args.mode}: {length(toks)} tokens, {length(seed)} typedefs\n")
         }
-        if (args.time > 0 && args.count) {
-            if (args.mode != "flex") {
-                print("--count needs --mode flex\n")
-                return 1
-            }
+        if (args.count) {
             time_count(path, text, typedefs, args.time)
         } elif (args.time > 0) {
             var inscope times : array<double>
