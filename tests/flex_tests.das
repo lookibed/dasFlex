@@ -5,7 +5,9 @@ require dastest/testing_boost public
 require daslib/rtti
 require daslib/ast
 require daslib/debugger
+require daslib/stringify
 require strings
+require daslib/strings_boost
 require flex/flex_macro
 
 enum TTok {
@@ -811,27 +813,48 @@ def test_group_with_text_emit_begin(t : T?) {
     t |> success(!lx.failed)
 }
 
-//! a module with a lexer of `nrules` keyword rules `k0`, `k1`, ... under `shape` and an exported
-//! `run` that lexes `src` and packs the kinds three decimal digits each
-def private many_rules_module(nrules : int; shape, src : string) : string {
+//! the scanner driver of a stamped module: `run(shape, src, out)` lexes `src` with lexer `lex<shape>`
+//! and writes `kind@line:col:text` per token, then the error text, joined by `\x1F`
+let private STAMP_RUN = %stringify~
+[export]
+def run(shape : int; src : string; var out : string?) {
+    var lx : FlexLexer
+    flex_open(lx, src, "t.txt")
+    var toks : array<string>
+    while (lex_by(shape, lx)) {
+        toks |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}:{text(lx)}")
+    }
+    toks |> push(lx.err)
+    *out = join(toks, "\x1F")
+}
+%%
+
+//! the table-mode call matcher with the if chain: the shape every other one is compared with
+let private REF_SHAPE = "mode = \"table\", matcher = \"call\", dispatch = \"if\""
+
+//! a module stamping the `[flex]` body `rules` once per entry of `shapes` as `lex0`, `lex1`, ...,
+//! and the `run` of `STAMP_RUN` over them
+def private stamped_module(rules : string; shapes : array<string>) : string {
     return build_string() $(var w) {
-        w |> write("options gen2\nrequire flex/flex_macro\n[flex({shape})]\n")
-        w |> write("def many(var lx : FlexLexer) : bool \{\n")
-        for (i in range(nrules)) {
-            w |> write("    rule(\"k{i}\") \{ lx |> emit({i}) \}\n")
+        w |> write("options gen2\nrequire flex/flex_macro\nrequire daslib/strings_boost\n")
+        for (i, shape in count(), shapes) {
+            w |> write("[flex({shape})]\ndef lex{i}(var lx : FlexLexer) : bool \{\n{rules}\n\}\n")
         }
-        w |> write("    rule(\" +\") \{ \}\n\}\n")
-        w |> write("[export]\ndef run(var out : int?) \{\n    var lx : FlexLexer\n")
-        w |> write("    flex_open(lx, \"{src}\")\n    *out = 0\n")
-        w |> write("    while (many(lx)) \{\n        *out = *out * 1000 + lx.tok.kind\n    \}\n\}\n")
+        w |> write("def lex_by(shape : int; var lx : FlexLexer) : bool \{\n    return ")
+        for (i in range(length(shapes))) {
+            w |> write("shape == {i} ? lex{i}(lx) : ")
+        }
+        w |> write("false\n\}\n{STAMP_RUN}")
     }
 }
 
-//! compiles `text` as the virtual file `name` and calls its `run`: the issues, or "" and the result
-def private compile_and_run(name, text : string) : tuple<issues : string; result : int> {
-    var res = (issues = "", result = -1)
+//! compiles `rules` stamped once per shape as the virtual file `name` and lexes `src` with each
+//! lexer: the issues, or "" and the stream of every shape in the order of `shapes`
+def private shape_streams(name, rules : string; shapes : array<string>;
+                          src : string) : tuple<issues : string; streams : array<array<string>>> {
+    var res : tuple<issues : string; streams : array<array<string>>>
     var inscope access <- make_file_access("")
-    set_file_source(access, name, text)
+    set_file_source(access, name, stamped_module(rules, shapes))
     using() $(var mg : ModuleGroup) {
         using() $(var cop : CodeOfPolicies) {
             cop.threadlock_context = true
@@ -841,26 +864,73 @@ def private compile_and_run(name, text : string) : tuple<issues : string; result
                 simulate(program) $(sok; context; serrors) {
                     res.issues = sok ? "" : string(serrors)
                     return if (!sok)
-                    var out = 0
-                    unsafe {
-                        *context |> invoke_in_context("run", addr(out))
+                    for (shape in range(length(shapes))) {
+                        var out = ""
+                        unsafe {
+                            *context |> invoke_in_context("run", shape, src, addr(out))
+                        }
+                        res.streams |> emplace(split(out, "\x1F"))
                     }
-                    res.result = out
                 }
             }
         }
     }
-    return res
+    return <- res
 }
 
 [test(description = "the 254-rule cap binds the inline table matcher only: goto mode lexes 261 rules, table mode refuses them")]
 def test_many_rules(t : T?) {
-    let src = "k7 k259 k130"
-    let in_goto = compile_and_run("many_goto.das", many_rules_module(260, "mode = \"goto\"", src))
+    let rules = build_string() $(var w) {
+        for (i in range(260)) {
+            w |> write("    rule(\"k{i}\") \{ lx |> emit({i}) \}\n")
+        }
+        w |> write("    rule(\" +\") \{ \}\n")
+    }
+    let in_goto <- shape_streams("many_goto.das", rules, ["mode = \"goto\""], "k7 k259 k130")
     t |> equal(in_goto.issues, "")
-    t |> equal(in_goto.result, 7259130)
-    let table_src = many_rules_module(260, "mode = \"table\"", src)
-    let in_table = compile_and_run("many_table.das", table_src)
+    t |> equal(in_goto.streams, [["7@1:1:k7", "259@1:4:k259", "130@1:9:k130", ""]])
+    let in_table <- shape_streams("many_table.das", rules, ["mode = \"table\""], "k7")
     t |> success(find(in_table.issues, "at most 254 rules") >= 0, in_table.issues)
 }
 
+[test(description = "goto mode and the inline matcher carry the newlines inside a token to the token that follows: a string spanning lines, then a word, at the lines and columns of the call shape")]
+def test_newline_inside_token(t : T?) {
+    let rules = %stringify~
+    rule("\"[^\"]*\"") {
+        lx |> emit(1)
+    }
+    rule("[a-z]+") {
+        lx |> emit(2)
+    }
+    rule("[ \\n]+") {
+    }
+%%
+    let src = "\"a\nb\" c\n\"\n\n\" d"
+    let res <- shape_streams("newline_inside.das", rules,
+                             [REF_SHAPE, "mode = \"goto\", dispatch = \"if\"",
+                              "mode = \"table\", matcher = \"inline\""], src)
+    t |> equal(res.issues, "")
+    let want <- ["1@1:1:\"a\nb\"", "2@2:4:c", "1@3:1:\"\n\n\"", "2@5:3:d", ""]
+    for (stream in res.streams) {
+        t |> equal(stream, want)
+    }
+}
+
+[test(description = "a set holding every byte from 0 to 58 keeps the newline in a class of its own: the inline matcher and goto mode take `a b`, a newline and `c` as one token and count its line")]
+def test_newline_class_inside_a_set(t : T?) {
+    let rules = %stringify~
+    rule("[^;]+") {
+        lx |> emit(1)
+    }
+    rule(";") {
+        lx |> emit(2)
+    }
+%%
+    let res <- shape_streams("newline_class.das", rules,
+                             [REF_SHAPE, "mode = \"table\", matcher = \"inline\"",
+                              "mode = \"goto\""], "a b\nc;")
+    t |> equal(res.issues, "")
+    for (stream in res.streams) {
+        t |> equal(stream, ["1@1:1:a b\nc", "2@2:2:;", ""])
+    }
+}
