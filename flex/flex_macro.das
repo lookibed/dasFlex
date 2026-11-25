@@ -93,12 +93,7 @@ class private ActionRewrite : AstVisitor {
         }
         if (expr.name == "begin" && expr.arguments[1] is ExprConstString) {
             let cname = string((expr.arguments[1] as ExprConstString).value)
-            var idx = -1
-            for (i, n in count(), cond_names) {
-                if (n == cname) {
-                    idx = i
-                }
-            }
+            let idx = find_index(cond_names, cname)
             if (idx < 0) {
                 if (empty(err)) {
                     err = "begin(\"{cname}\"): no such start condition"
@@ -595,18 +590,32 @@ def private make_token_set(lx : string) : array<ExpressionPtr> {
     }
 }
 
+//! the names of the private globals that hold one scanner's tables
+struct private TableGlobals {
+    next : string
+    accept : string
+    class_of : string
+    start : string
+    merged : string
+}
+
+def private table_globals(func_name : string) : TableGlobals {
+    return TableGlobals(next = "{func_name}`flex`next", accept = "{func_name}`flex`accept",
+                        class_of = "{func_name}`flex`class", start = "{func_name}`flex`start",
+                        merged = "{func_name}`flex`merged")
+}
+
 //! the match in one of three shapes: the inline byte loop, a call to `flex_match_table`, or the DFA
 //! as labelled straight-line code; each leaves the rule and the length in `rule` and `len`
-def private make_match(spec : FlexSpec; t : FlexTables; lx, mode, matcher : string;
+def private make_match(g : TableGlobals; t : FlexTables; lx, mode, matcher : string;
                        at : LineInfo) : array<ExpressionPtr> {
-    let g_class = "{spec.func_name}`flex`class"
-    let g_start = "{spec.func_name}`flex`start"
+    let g_class = g.class_of
+    let g_start = g.start
     if (mode == "table" && matcher == "inline") {
-        return <- make_inline_matcher(lx, "{spec.func_name}`flex`merged", g_class, g_start,
-                                      t.nclasses, t.class_of[10])
+        return <- make_inline_matcher(lx, g.merged, g_class, g_start, t.nclasses, t.class_of[10])
     } elif (mode == "table") {
-        let g_next = "{spec.func_name}`flex`next"
-        let g_accept = "{spec.func_name}`flex`accept"
+        let g_next = g.next
+        let g_accept = g.accept
         let nclasses = t.nclasses
         return <- qmacro_block_to_array() {
             flex`rule = flex_match_table($i(lx), $i(g_next), $i(g_accept), $i(g_class),
@@ -638,11 +647,11 @@ def private make_take(lx, mode, matcher : string) : array<ExpressionPtr> {
 
 //! the generated function body: match, take the token, dispatch on the rule; the loop and its guards
 //! are generated, the user's rule bodies inside the arms are not
-def private make_scanner_body(spec : FlexSpec; t : FlexTables; lx, mode, dispatch, matcher : string;
-                              at : LineInfo) : ExpressionPtr {
+def private make_scanner_body(spec : FlexSpec; g : TableGlobals; t : FlexTables;
+                              lx, mode, dispatch, matcher : string; at : LineInfo) : ExpressionPtr {
     let base = mode == "goto" ? t.nstates + 1 : 0
     var arms <- make_arms(spec, "flex`rule", dispatch, base, at)
-    var match <- make_match(spec, t, lx, mode, matcher, at)
+    var match <- make_match(g, t, lx, mode, matcher, at)
     var take <- make_take(lx, mode, matcher)
     var newBody = qmacro_block() {
         while (true) {
@@ -727,26 +736,23 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
     return fail_rule(t.err, spec.arms[t.err_rule].site, errors) if (!empty(t.err))
     let lx = string(func.arguments[0].name)
     to_log(LOG_INFO, "[flex] {func.name}: mode {shape.mode} dispatch {shape.dispatch}\n")
-    let g_next = "{func.name}`flex`next"
-    let g_accept = "{func.name}`flex`accept"
-    let g_class = "{func.name}`flex`class"
-    let g_start = "{func.name}`flex`start"
-    let g_merged = "{func.name}`flex`merged"
-    return false if (!int_table_global(g_start, t.start, func.at, errors))
+    let g = table_globals(spec.func_name)
+    return false if (!int_table_global(g.start, t.start, func.at, errors))
     if (shape.mode == "table" && shape.matcher == "inline") {
-        return false if (!int_table_global(g_merged, merged_table(t), func.at, errors)
-            || !int_table_global(g_class, t.class_of, func.at, errors))
+        return false if (!int_table_global(g.merged, merged_table(t), func.at, errors)
+            || !int_table_global(g.class_of, t.class_of, func.at, errors))
     } elif (shape.mode == "table") {
-        return false if (!int_table_global(g_next, t.next, func.at, errors)
-            || !int_table_global(g_accept, t.accept, func.at, errors)
-            || !int_table_global(g_class, t.class_of, func.at, errors))
+        return false if (!int_table_global(g.next, t.next, func.at, errors)
+            || !int_table_global(g.accept, t.accept, func.at, errors)
+            || !int_table_global(g.class_of, t.class_of, func.at, errors))
     }
     for (arm in spec.arms) {
         continue if (empty(arm.group_re))
         let pattern = spec.rules[arm.rule].pattern
         return false if (!regex_global(arm.group_re, pattern, arm.site.at, errors))
     }
-    func.body = make_scanner_body(spec, t, lx, shape.mode, shape.dispatch, shape.matcher, func.at)
+    func.body = make_scanner_body(spec, g, t, lx, shape.mode, shape.dispatch, shape.matcher,
+                                  func.at)
     return true
 }
 
