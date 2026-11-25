@@ -296,16 +296,11 @@ def private mark_generated(var e : ExpressionPtr) {
     }
 }
 
+//! the private global `name` initialized as `to_array_move([vals...])`
 def private int_table_global(name : string; vals : array<int>; at : LineInfo;
                              var errors : das_string) : bool {
-    var mkArr = new ExprMakeArray(at = at, makeType <- typeinfo ast_typedecl(type<int>))
-    for (v in vals) {
-        mkArr.values |> emplace_new <| new ExprConstInt(at = at, value = v)
-    }
-    mkArr.makeType = make_fixed_array_type(length(vals), mkArr.makeType)
-    var mkMove = new ExprCall(at = at, name := "to_array_move")
-    mkMove.arguments |> emplace(mkArr)
-    if (!(compiling_module() |> add_global_private_var(name, at, mkMove))) {
+    var init = convert_to_expression(vals, at)
+    if (!(compiling_module() |> add_global_private_var(name, at, init))) {
         errors := "can't add the global {name}"
         return false
     }
