@@ -7,6 +7,7 @@ require daslib/ast
 require strings
 require daslib/strings_boost
 require flex/flex_macro
+require _flex_test_helpers
 
 enum RTok {
     WORD = 1
@@ -105,21 +106,6 @@ def stream(src, which : string) : array<string> {
     }
     out |> push(lx.err)
     return <- out
-}
-
-//! compiles `text` as the virtual file `name`; "" when it compiled clean, the issue text otherwise
-def private compile_issues(name, text : string) : string {
-    var out = ""
-    var inscope access <- make_file_access("")
-    set_file_source(access, name, text)
-    using() $(var mg : ModuleGroup) {
-        using() $(var cop : CodeOfPolicies) {
-            compile_file(name, access, unsafe(addr(mg)), cop) $(ok; _program; issues) {
-                out = ok ? "" : string(issues)
-            }
-        }
-    }
-    return out
 }
 
 //! a module with the enum `E { A = 1 }` and a reader lexer of `rules` after `defs`

@@ -9,6 +9,7 @@ require daslib/stringify
 require strings
 require daslib/strings_boost
 require flex/flex_macro
+require _flex_test_helpers
 
 enum TTok {
     IF = 1
@@ -47,234 +48,6 @@ def mini(var lx : FlexLexer) : bool {
     }
     rule("[+*/=;()\{\}\\-]") {
         lx |> emit(TTok.PUNCT)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(mode = "table", dispatch = "if", matcher = "call")]
-def mini_call(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        lx |> emit(TTok.IDENT)
-    }
-    rule("[0-9]+") {
-        lx |> emit(TTok.NUM)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        lx |> emit(TTok.PUNCT)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(mode = "table", dispatch = "if")]
-def shape_table_if(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        let k = TTok.IDENT
-        lx |> emit(k)
-    }
-    rule("[0-9]+") {
-        let k = TTok.NUM
-        lx |> emit(k)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        let k = TTok.PUNCT
-        lx |> emit(k)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(mode = "table", dispatch = "goto")]
-def shape_table_goto(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        let k = TTok.IDENT
-        lx |> emit(k)
-    }
-    rule("[0-9]+") {
-        let k = TTok.NUM
-        lx |> emit(k)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        let k = TTok.PUNCT
-        lx |> emit(k)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(mode = "table", dispatch = "tree")]
-def shape_table_tree(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        let k = TTok.IDENT
-        lx |> emit(k)
-    }
-    rule("[0-9]+") {
-        let k = TTok.NUM
-        lx |> emit(k)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        let k = TTok.PUNCT
-        lx |> emit(k)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(mode = "goto", dispatch = "if")]
-def shape_goto_if(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        let k = TTok.IDENT
-        lx |> emit(k)
-    }
-    rule("[0-9]+") {
-        let k = TTok.NUM
-        lx |> emit(k)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        let k = TTok.PUNCT
-        lx |> emit(k)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(mode = "goto", dispatch = "goto")]
-def shape_goto_goto(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        let k = TTok.IDENT
-        lx |> emit(k)
-    }
-    rule("[0-9]+") {
-        let k = TTok.NUM
-        lx |> emit(k)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        let k = TTok.PUNCT
-        lx |> emit(k)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(mode = "goto", dispatch = "tree")]
-def shape_goto_tree(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        let k = TTok.IDENT
-        lx |> emit(k)
-    }
-    rule("[0-9]+") {
-        let k = TTok.NUM
-        lx |> emit(k)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        let k = TTok.PUNCT
-        lx |> emit(k)
     }
     condition("COMMENT", exclusive) {
         rule("\\*/") {
@@ -331,37 +104,6 @@ def kinds_of(src : string) : array<int> {
     while (mini(lx)) {
         out |> push(lx.tok.kind)
     }
-    return <- out
-}
-
-def next_of(var lx : FlexLexer; shape : string) : bool {
-    if (shape == "call") {
-        return mini_call(lx)
-    } elif (shape == "table_if") {
-        return shape_table_if(lx)
-    } elif (shape == "table_goto") {
-        return shape_table_goto(lx)
-    } elif (shape == "table_tree") {
-        return shape_table_tree(lx)
-    } elif (shape == "goto_if") {
-        return shape_goto_if(lx)
-    } elif (shape == "goto_goto") {
-        return shape_goto_goto(lx)
-    } elif (shape == "goto_tree") {
-        return shape_goto_tree(lx)
-    }
-    return mini(lx)
-}
-
-//! the tokens of `src` as `kind@line:col:text` from one shape of the small lexer, then the error text
-def stream_of(src, shape : string) : array<string> {
-    var lx : FlexLexer
-    flex_open(lx, src, "t.txt")
-    var out : array<string>
-    while (next_of(lx, shape)) {
-        out |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}:{text(lx)}")
-    }
-    out |> push(lx.err)
     return <- out
 }
 
@@ -492,25 +234,78 @@ def test_error_text_forms(t : T?) {
     t |> equal(flex_error_text(lx), "1:1: unexpected end of input")
 }
 
+//! the table-mode call matcher with the if chain: the shape every other one is compared with
+let private REF_SHAPE = "mode = \"table\", matcher = \"call\", dispatch = \"if\""
+
+//! the small lexer's rules for the shape comparison, two of them declaring the same local
+let private SHAPE_RULES = %stringify~
+    rule("if") {
+        lx |> emit(1)
+    }
+    rule("[A-Za-z_][A-Za-z0-9_]*") {
+        let k = 2
+        lx |> emit(k)
+    }
+    rule("[0-9]+") {
+        let k = 3
+        lx |> emit(k)
+    }
+    rule("[ \\t\\r\\n]+") {
+    }
+    rule("/\\*") {
+        lx |> begin("COMMENT")
+    }
+    rule("[+*/=;()\{\}\\-]") {
+        let k = 5
+        lx |> emit(k)
+    }
+    condition("COMMENT", exclusive) {
+        rule("\\*/") {
+            lx |> begin("INITIAL")
+        }
+        rule("[^*]+") {
+        }
+        rule("\\*") {
+        }
+    }
+%%
+
+//! the reference shape, then table mode with the if, goto and tree dispatch, goto mode with the same
+//! three
+let private EXPLICIT_SHAPES <- [REF_SHAPE, "mode = \"table\", dispatch = \"if\"",
+                                "mode = \"table\", dispatch = \"goto\"",
+                                "mode = \"table\", dispatch = \"tree\"",
+                                "mode = \"goto\", dispatch = \"if\"",
+                                "mode = \"goto\", dispatch = \"goto\"",
+                                "mode = \"goto\", dispatch = \"tree\""]
+
 [test(description = "every explicit shape - table mode with the if, goto and tree dispatch, goto mode with the same three - gives the tokens, lines, columns and errors of the table-mode call matcher")]
 def test_shape_equivalence(t : T?) {
     let src = "if (x1 == 42) /* c\n * / */ y =\tiff;\n\n  z-1 /* a\nb\nc */ w"
-    let want <- stream_of(src, "call")
+    let res <- shape_streams("shapes.das", SHAPE_RULES, EXPLICIT_SHAPES, src, tier_is_jit())
+    t |> equal(res.issues, "")
+    let want := res.streams[0]
     t |> equal(want[length(want) - 2], "2@6:6:w")
-    let want_bad <- stream_of("a\n §", "call")
-    t |> equal(want_bad[length(want_bad) - 1], "t.txt:2:2: unexpected '§'")
-    for (shape in ["table_if", "table_goto", "table_tree", "goto_if", "goto_goto", "goto_tree"]) {
-        t |> equal(stream_of(src, shape), want)
-        t |> equal(stream_of("a\n §", shape), want_bad)
+    for (stream in res.streams) {
+        t |> equal(stream, want)
+    }
+    let bad <- shape_streams("shapes_bad.das", SHAPE_RULES, EXPLICIT_SHAPES, "a\n §",
+                             tier_is_jit())
+    t |> equal(bad.issues, "")
+    t |> equal(bad.streams[0], ["2@1:1:a", "t.txt:2:2: unexpected '§'"])
+    for (stream in bad.streams) {
+        t |> equal(stream, bad.streams[0])
     }
 }
 
 [test(description = "two rule bodies that declare the same local compile and lex in every mode and dispatch shape")]
 def test_rule_body_scopes(t : T?) {
-    let src = "if (x1 == 42) /* c * / */ y"
-    let want <- stream_of(src, "call")
-    for (shape in ["table_if", "table_goto", "table_tree", "goto_if", "goto_goto", "goto_tree"]) {
-        t |> equal(stream_of(src, shape), want)
+    let res <- shape_streams("scopes.das", SHAPE_RULES, EXPLICIT_SHAPES,
+                             "if (x1 == 42) /* c * / */ y",
+                             tier_is_jit())
+    t |> equal(res.issues, "")
+    for (stream in res.streams) {
+        t |> equal(stream, res.streams[0])
     }
 }
 
@@ -563,47 +358,6 @@ def test_symbols_table(t : T?) {
     t |> equal(words, ["type", "name"])
 }
 
-[flex(mode = "table")]
-def merge_table(var lx : FlexLexer) : bool {
-    rule("ab|cb") {
-        lx |> emit(1)
-    }
-    rule("[0-9]+") {
-        lx |> emit(2)
-    }
-    rule("[0-9]+x") {
-        lx |> emit(3)
-    }
-    rule(" +") {
-    }
-}
-
-[flex(mode = "goto")]
-def merge_goto(var lx : FlexLexer) : bool {
-    rule("ab|cb") {
-        lx |> emit(1)
-    }
-    rule("[0-9]+") {
-        lx |> emit(2)
-    }
-    rule("[0-9]+x") {
-        lx |> emit(3)
-    }
-    rule(" +") {
-    }
-}
-
-def merge_stream(src : string; use_goto : bool) : array<string> {
-    var lx : FlexLexer
-    flex_open(lx, src, "t.txt")
-    var out : array<string>
-    while (use_goto ? merge_goto(lx) : merge_table(lx)) {
-        out |> push("{lx.tok.kind}:{text(lx)}")
-    }
-    out |> push(lx.err)
-    return <- out
-}
-
 require flex/flex_regex
 require flex/flex_dfa
 
@@ -614,12 +368,31 @@ def state_counts(rules : array<FlexRule>; ncond : int) : tuple<before : int; aft
     return (before = raw.nstates, after = t.nstates)
 }
 
-[test(description = "a rule set whose subset construction yields equivalent states lexes the same tokens after minimization")]
+//! rules whose subset construction yields equivalent states
+let private MERGE_RULES = %stringify~
+    rule("ab|cb") {
+        lx |> emit(1)
+    }
+    rule("[0-9]+") {
+        lx |> emit(2)
+    }
+    rule("[0-9]+x") {
+        lx |> emit(3)
+    }
+    rule(" +") {
+    }
+%%
+
+[test(description = "a rule set whose subset construction yields equivalent states lexes the same tokens after minimization, in table and goto mode")]
 def test_minimized_token_stream(t : T?) {
-    let want <- ["1:ab", "1:cb", "2:12", "3:7x", "2:0", "1:cb", "t.txt:1:17: unexpected 'a'"]
-    let src = "ab cb 12 7x 0cb a"
-    t |> equal(merge_stream(src, false), want)
-    t |> equal(merge_stream(src, true), want)
+    let res <- shape_streams("merge.das", MERGE_RULES, ["mode = \"table\"", "mode = \"goto\""],
+                             "ab cb 12 7x 0cb a", tier_is_jit())
+    t |> equal(res.issues, "")
+    for (stream in res.streams) {
+        t |> equal(stream,
+                   ["1@1:1:ab", "1@1:4:cb", "2@1:7:12", "3@1:10:7x", "2@1:13:0", "1@1:14:cb",
+                            "t.txt:1:17: unexpected 'a'"])
+    }
 }
 
 [test(description = "minimization merges equivalent states down to the hand-computed minimum and keeps the tables dense")]
@@ -716,68 +489,50 @@ def test_minimized_start_states(t : T?) {
 // what the rule bodies of the group lexers below saw, one line per token
 var private group_log : array<string>
 
-[flex]
-def groups_kv(var lx : FlexLexer) : bool {
+//! two rules with capture groups that log what their group calls return
+let private GROUP_RULES = %stringify~
     rule("([a-z]+)=([0-9]+)") {
-        group_log |> push("{lx |> group(1)}|{group(lx, 2)}|{lx |> group_span(1)}|{lx |> group_span(2)}|{lx |> group(0)}")
+        rule_log |> push("{lx |> group(1)}|{group(lx, 2)}|{lx |> group_span(1)}|{lx |> group_span(2)}|{lx |> group(0)}")
         lx |> emit(1)
     }
     rule("(0x)?([0-9a-fA-F]+)") {
-        group_log |> push("'{lx |> group(1)}'|{lx |> group(2)}|{lx |> group_span(1)}")
+        rule_log |> push("'{lx |> group(1)}'|{lx |> group(2)}|{lx |> group_span(1)}")
         lx |> emit(2)
     }
     rule("[ ]+") {
     }
-}
+%%
 
-[flex(mode = "goto")]
-def groups_kv_goto(var lx : FlexLexer) : bool {
-    rule("([a-z]+)=([0-9]+)") {
-        group_log |> push("{lx |> group(1)}|{group(lx, 2)}|{lx |> group_span(1)}|{lx |> group_span(2)}|{lx |> group(0)}")
-        lx |> emit(1)
-    }
-    rule("(0x)?([0-9a-fA-F]+)") {
-        group_log |> push("'{lx |> group(1)}'|{lx |> group(2)}|{lx |> group_span(1)}")
-        lx |> emit(2)
-    }
-    rule("[ ]+") {
-    }
-}
-
-//! `group_log` after lexing `src` with the table or the goto shape, then `kind:text` per token
-def group_stream(src : string; use_goto : bool) : array<string> {
-    group_log |> clear()
-    var lx : FlexLexer
-    flex_open(lx, src, "t.txt")
-    var kinds : array<string>
-    while (use_goto ? groups_kv_goto(lx) : groups_kv(lx)) {
-        kinds |> push("{lx.tok.kind}:{text(lx)}")
-    }
-    var out <- group_log
-    out |> push_from(kinds)
-    out |> push(lx.err)
-    return <- out
+//! the streams of `GROUP_RULES` over `src` in table and goto mode, each the tokens, the error text
+//! and then what the group calls returned
+def private group_streams(t : T?; name, src : string) : array<array<string>> {
+    var res <- shape_streams(name, GROUP_RULES, ["mode = \"table\"", "mode = \"goto\""], src,
+                             tier_is_jit())
+    t |> equal(res.issues, "")
+    return <- res.streams
 }
 
 [test(description = "group(n) is the text of capture group n of the token, group_span(n) its input bytes, group(0) the token")]
 def test_group_text_and_span(t : T?) {
-    t |> equal(group_stream("ab=12  c=3", false),
-               ["ab|12|0,2|3,5|ab=12", "c|3|7,8|9,10|c=3", "1:ab=12", "1:c=3", ""])
+    for (stream in group_streams(t, "group_text.das", "ab=12  c=3")) {
+        t |> equal(stream,
+                   ["1@1:1:ab=12", "1@1:8:c=3", "", "ab|12|0,2|3,5|ab=12", "c|3|7,8|9,10|c=3"])
+    }
 }
 
 [test(description = "a group that took no part in the match is the empty string, its span range(0, 0)")]
 def test_group_not_participating(t : T?) {
-    t |> equal(group_stream("ff 0x1a", false),
-               ["''|ff|0,0", "'0x'|1a|3,5", "2:ff", "2:0x1a", ""])
+    for (stream in group_streams(t, "group_absent.das", "ff 0x1a")) {
+        t |> equal(stream, ["2@1:1:ff", "2@1:4:0x1a", "", "''|ff|0,0", "'0x'|1a|3,5"])
+    }
 }
 
 [test(description = "two rules with groups in one lexer each re-run their own regex, in table and goto mode alike")]
 def test_two_rules_with_groups(t : T?) {
-    let src = "ab=1 0x2 c=3 7"
-    let want <- ["ab|1|0,2|3,4|ab=1", "'0x'|2|5,7", "c|3|9,10|11,12|c=3", "''|7|0,0",
-                 "1:ab=1", "2:0x2", "1:c=3", "2:7", ""]
-    t |> equal(group_stream(src, false), want)
-    t |> equal(group_stream(src, true), want)
+    for (stream in group_streams(t, "group_two.das", "ab=1 0x2 c=3 7")) {
+        t |> equal(stream, ["1@1:1:ab=1", "2@1:6:0x2", "1@1:10:c=3", "2@1:14:7", "",
+                            "ab|1|0,2|3,4|ab=1", "'0x'|2|5,7", "c|3|9,10|11,12|c=3", "''|7|0,0"])
+    }
 }
 
 [flex]
@@ -877,74 +632,6 @@ def test_group_with_text_emit_begin(t : T?) {
     t |> success(!lx.failed)
 }
 
-//! the scanner driver of a stamped module: `run(shape, src, out)` lexes `src` with lexer `lex<shape>`
-//! and writes `kind@line:col:text` per token, then the error text, joined by `\x1F`
-let private STAMP_RUN = %stringify~
-[export]
-def run(shape : int; src : string; var out : string?) {
-    var lx : FlexLexer
-    flex_open(lx, src, "t.txt")
-    var toks : array<string>
-    while (lex_by(shape, lx)) {
-        toks |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}:{text(lx)}")
-    }
-    toks |> push(lx.err)
-    *out = join(toks, "\x1F")
-}
-%%
-
-//! the table-mode call matcher with the if chain: the shape every other one is compared with
-let private REF_SHAPE = "mode = \"table\", matcher = \"call\", dispatch = \"if\""
-
-//! a module stamping the `[flex]` body `rules` once per entry of `shapes` as `lex0`, `lex1`, ...,
-//! and the `run` of `STAMP_RUN` over them; an empty shape is `[flex]` with no arguments
-def private stamped_module(rules : string; shapes : array<string>) : string {
-    return build_string() $(var w) {
-        w |> write("options gen2\nrequire flex/flex_macro\nrequire daslib/strings_boost\n")
-        for (i, shape in count(), shapes) {
-            let args = empty(shape) ? "" : "({shape})"
-            w |> write("[flex{args}]\ndef lex{i}(var lx : FlexLexer) : bool \{\n{rules}\n\}\n")
-        }
-        w |> write("def lex_by(shape : int; var lx : FlexLexer) : bool \{\n    return ")
-        for (i in range(length(shapes))) {
-            w |> write("shape == {i} ? lex{i}(lx) : ")
-        }
-        w |> write("false\n\}\n{STAMP_RUN}")
-    }
-}
-
-//! compiles `rules` stamped once per shape as the virtual file `name`, for the JIT tier when `jit`,
-//! and lexes `src` with each lexer: the issues, or "" and the stream of every shape in the order of
-//! `shapes`
-def private shape_streams(name, rules : string; shapes : array<string>; src : string;
-                          jit : bool = false) : tuple<issues : string; streams : array<array<string>>> {
-    var res : tuple<issues : string; streams : array<array<string>>>
-    var inscope access <- make_file_access("")
-    set_file_source(access, name, stamped_module(rules, shapes))
-    using() $(var mg : ModuleGroup) {
-        using() $(var cop : CodeOfPolicies) {
-            cop.threadlock_context = true
-            cop.jit_enabled = jit
-            compile_file(name, access, unsafe(addr(mg)), cop) $(ok; program; issues) {
-                res.issues = string(issues)
-                return if (!ok)
-                simulate(program) $(sok; context; serrors) {
-                    res.issues = sok ? "" : string(serrors)
-                    return if (!sok)
-                    for (shape in range(length(shapes))) {
-                        var out = ""
-                        unsafe {
-                            *context |> invoke_in_context("run", shape, src, addr(out))
-                        }
-                        res.streams |> emplace(split(out, "\x1F"))
-                    }
-                }
-            }
-        }
-    }
-    return <- res
-}
-
 //! 260 keyword rules `k0` .. `k259` emitting their index, then a blank rule
 def private many_rules() : string {
     return build_string() $(var w) {
@@ -980,7 +667,7 @@ def test_newline_inside_token(t : T?) {
     let src = "\"a\nb\" c\n\"\n\n\" d"
     let res <- shape_streams("newline_inside.das", rules,
                              [REF_SHAPE, "mode = \"goto\", dispatch = \"if\"",
-                              "mode = \"table\", matcher = \"inline\""], src)
+                              "mode = \"table\", matcher = \"inline\""], src, tier_is_jit())
     t |> equal(res.issues, "")
     let want <- ["1@1:1:\"a\nb\"", "2@2:4:c", "1@3:1:\"\n\n\"", "2@5:3:d", ""]
     for (stream in res.streams) {
@@ -1000,21 +687,19 @@ def test_newline_class_inside_a_set(t : T?) {
 %%
     let res <- shape_streams("newline_class.das", rules,
                              [REF_SHAPE, "mode = \"table\", matcher = \"inline\"",
-                              "mode = \"goto\""], "a b\nc;")
+                              "mode = \"goto\""], "a b\nc;", tier_is_jit())
     t |> equal(res.issues, "")
     for (stream in res.streams) {
         t |> equal(stream, ["1@1:1:a b\nc", "2@2:2:;", ""])
     }
 }
 
-[test(description = "with no mode the shape follows the tier: the interpreter's table default refuses 261 rules at the inline matcher's cap, the JIT's goto default lexes them")]
+[test(description = "with no mode the shape follows the tier: the interpreter's table default refuses 261 rules at the inline matcher's cap, the JIT's goto default compiles them")]
 def test_tier_default_mode(t : T?) {
-    let rules = many_rules()
-    let interp <- shape_streams("tier_interp.das", rules, [""], "k7 k259")
-    t |> success(find(interp.issues, "at most 254 rules") >= 0, interp.issues)
-    let jit <- shape_streams("tier_jit.das", rules, [""], "k7 k259", true)
-    t |> equal(jit.issues, "")
-    t |> equal(jit.streams, [["7@1:1:k7", "259@1:4:k259", ""]])
+    let text = stamped_module(many_rules(), [""])
+    let interp = compile_issues("tier_interp.das", text)
+    t |> success(find(interp, "at most 254 rules") >= 0, interp)
+    t |> equal(compile_issues("tier_jit.das", text, true), "")
 }
 
 [test(description = "a mode, dispatch or matcher value the annotation does not know fails the compile naming the value and the ones it takes")]
