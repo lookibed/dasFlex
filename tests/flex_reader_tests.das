@@ -52,6 +52,8 @@ WORD    [a-z]({D}|[a-z])*
 %flex~ r_untyped
 %rules
 [0-9]+              { lx |> emit(7) }
+"/"[a-z]+           { lx |> emit(8) }
+\/[/]               { lx |> emit(9) }
 .                   { }
 %%
 
@@ -124,8 +126,9 @@ def test_start_conditions(t : T?) {
     }
 }
 
-[test(description = "a quoted pattern is literal text, an unquoted one a regex; definitions expand in parentheses")]
+[test(description = "a quoted pattern is literal text, an unquoted one a regex, a quoted, escaped or bracketed slash a literal; definitions expand in parentheses")]
 def test_quoted_and_regex(t : T?) {
+    t |> equal(stream("/ab // y", "untyped"), ["8:/ab", "9://", ""])
     t |> equal(stream("a+ aa", "kinds"), ["{int(RTok.LIT)}:a+", "{int(RTok.WORD)}:aa", ""])
     t |> equal(stream("a1 123 4", "defs"),
                ["{int(RTok.WORD)}:a1", "{int(RTok.NUM)}:12", "t.txt:1:6: unexpected '3'"])
@@ -191,6 +194,13 @@ def test_errors(t : T?) {
         t |> success(find(issues, "e5.das:9:") >= 0, issues)
         issues = compile_issues("e6.das", reader_module("%y C\n", "\"a\"  \{ emit(A) \}\n"))
         t |> success(find(issues, "e6.das:7:") >= 0, issues)
+    }
+    t |> run("trailing context: an unquoted, unescaped slash outside a set") @(t : T?) {
+        let issues = compile_issues("e7.das",
+                                    reader_module("", "\"a\"  \{ emit(A) \}\nab/c   \{ \}\n"))
+        t |> success(find(issues, "trailing context (r/s) is not carried by dasFlex") >= 0,
+                     issues)
+        t |> success(find(issues, "e7.das:9:") >= 0, issues)
     }
 }
 

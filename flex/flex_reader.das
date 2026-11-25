@@ -123,7 +123,9 @@ def private definition_ref(var s : RScan; defs : table<string; string>) : string
     return "(?:{defs?[name] ?? ""})"
 }
 
-//! a flex pattern up to the first blank outside quotes and brackets, as `daslib/regex` text
+//! a flex pattern up to the first blank outside quotes and brackets, as `daslib/regex` text; a bare
+//! `/` is flex's trailing context and is refused
+[arch(at="../ARCHITECTURE.md#not-carried")]
 def private pattern(var s : RScan; defs : table<string; string>) : string {
     return build_string() $(var w) {
         var in_set = false
@@ -146,6 +148,9 @@ def private pattern(var s : RScan; defs : table<string; string>) : string {
             } elif (c == '"') {
                 s.pos++
                 quoted(s, w)
+            } elif (c == '/') {
+                fail(s, "trailing context (r/s) is not carried by dasFlex; a literal slash is "
+                    + "\"/\" or \\/")
             } elif (c == '[') {
                 in_set = true
                 w |> write_char(c)

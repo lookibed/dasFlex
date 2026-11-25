@@ -184,7 +184,8 @@ it by accident.
 ## Not carried by this version {#not-carried}
 
 - Capture groups in one pass: `group` re-matches the token (`#groups`); a tagged DFA is not built.
-- Trailing context (`r/s`) and anchors.
+- Trailing context (`r/s`) and anchors. The `%flex~` reader refuses a bare `/` - one outside
+  quotes and a set, not escaped - at the rule's line; `"/"` and `\/` stay literal slashes.
 - flex's `|` action (the next rule's action), `REJECT`, `yymore` and `%array`/`%pointer` in the
   `%flex~` form; a brace-less action is one line with no comment.
 - Unicode classes such as `[а-я]`: the set syntax of `daslib/regex` is byte-wise, so a class over
