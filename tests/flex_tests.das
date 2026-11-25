@@ -57,37 +57,7 @@ def mini(var lx : FlexLexer) : bool {
     }
 }
 
-[flex(mode = "goto")]
-def mini_goto(var lx : FlexLexer) : bool {
-    rule("if") {
-        lx |> emit(TTok.IF)
-    }
-    rule("[A-Za-z_][A-Za-z0-9_]*") {
-        lx |> emit(TTok.IDENT)
-    }
-    rule("[0-9]+") {
-        lx |> emit(TTok.NUM)
-    }
-    rule("[ \\t\\r\\n]+") {
-    }
-    rule("/\\*") {
-        lx |> begin("COMMENT")
-    }
-    rule("[+*/=;()\{\}\\-]") {
-        lx |> emit(TTok.PUNCT)
-    }
-    condition("COMMENT", exclusive) {
-        rule("\\*/") {
-            lx |> begin("INITIAL")
-        }
-        rule("[^*]+") {
-        }
-        rule("\\*") {
-        }
-    }
-}
-
-[flex(dispatch = "if", matcher = "call")]
+[flex(mode = "table", dispatch = "if", matcher = "call")]
 def mini_call(var lx : FlexLexer) : bool {
     rule("if") {
         lx |> emit(TTok.IF)
@@ -352,26 +322,18 @@ def with_inclusive(var lx : FlexLexer) : bool {
     }
 }
 
-def kinds_of(src : string; use_goto : bool = false) : array<int> {
+def kinds_of(src : string) : array<int> {
     var lx : FlexLexer
     flex_open(lx, src, "t.txt")
     var out : array<int>
-    if (use_goto) {
-        while (mini_goto(lx)) {
-            out |> push(lx.tok.kind)
-        }
-    } else {
-        while (mini(lx)) {
-            out |> push(lx.tok.kind)
-        }
+    while (mini(lx)) {
+        out |> push(lx.tok.kind)
     }
     return <- out
 }
 
 def next_of(var lx : FlexLexer; shape : string) : bool {
-    if (shape == "goto") {
-        return mini_goto(lx)
-    } elif (shape == "call") {
+    if (shape == "call") {
         return mini_call(lx)
     } elif (shape == "table_if") {
         return shape_table_if(lx)
@@ -508,34 +470,23 @@ def test_error_bad_utf8(t : T?) {
     }
 }
 
-[test(description = "the goto-mode scanner yields the same tokens as the table-mode one")]
-def test_goto_mode_equivalence(t : T?) {
-    let src = "if (x1 == 42) /* c * / */ y = iff; z-1"
-    t |> equal(kinds_of(src, true), kinds_of(src, false))
-    var lx : FlexLexer
-    flex_open(lx, "a §", "t.txt")
-    while (mini_goto(lx)) {
-    }
-    t |> equal(lx.err, "t.txt:1:3: unexpected '§'")
-}
-
-[test(description = "goto mode and the call matcher give the same tokens, lines, columns and errors as the default inline matcher")]
-def test_line_column_equivalence(t : T?) {
+[test(description = "every explicit shape - table mode with the if, goto and tree dispatch, goto mode with the same three - gives the tokens, lines, columns and errors of the table-mode call matcher")]
+def test_shape_equivalence(t : T?) {
     let src = "if (x1 == 42) /* c\n * / */ y =\tiff;\n\n  z-1 /* a\nb\nc */ w"
-    let want <- stream_of(src, "inline")
+    let want <- stream_of(src, "call")
     t |> equal(want[length(want) - 2], "2@6:6:w")
-    t |> equal(stream_of(src, "goto"), want)
-    t |> equal(stream_of(src, "call"), want)
-    for (shape in ["inline", "goto", "call"]) {
-        var inscope bad <- stream_of("a\n §", shape)
-        t |> equal(bad[length(bad) - 1], "t.txt:2:2: unexpected '§'")
+    let want_bad <- stream_of("a\n §", "call")
+    t |> equal(want_bad[length(want_bad) - 1], "t.txt:2:2: unexpected '§'")
+    for (shape in ["table_if", "table_goto", "table_tree", "goto_if", "goto_goto", "goto_tree"]) {
+        t |> equal(stream_of(src, shape), want)
+        t |> equal(stream_of("a\n §", shape), want_bad)
     }
 }
 
 [test(description = "two rule bodies that declare the same local compile and lex in every mode and dispatch shape")]
 def test_rule_body_scopes(t : T?) {
     let src = "if (x1 == 42) /* c * / */ y"
-    let want <- stream_of(src, "goto")
+    let want <- stream_of(src, "call")
     for (shape in ["table_if", "table_goto", "table_tree", "goto_if", "goto_goto", "goto_tree"]) {
         t |> equal(stream_of(src, shape), want)
     }
