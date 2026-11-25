@@ -606,6 +606,15 @@ def test_minimized_state_counts(t : T?) {
     }
 }
 
+[test(description = "a regex form a DFA cannot carry is refused as not carried by dasFlex, with no pointer to an unsupported form")]
+def test_refused_forms(t : T?) {
+    for (pattern in ["^a", "a$", "\\ba", "a+?"]) {
+        let tb <- flex_tables([FlexRule(pattern = pattern)])
+        t |> success(find(tb.err, "does not fit a DFA and is not carried by dasFlex") >= 0, tb.err)
+        t |> success(find(tb.err, "trailing context") < 0, tb.err)
+    }
+}
+
 [test(description = "start states of two conditions merge when their languages coincide and stay apart when they differ")]
 def test_minimized_start_states(t : T?) {
     let same <- flex_tables([FlexRule(pattern = "ab|cb", conditions = [0, 1])], 2)

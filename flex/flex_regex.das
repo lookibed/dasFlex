@@ -156,9 +156,10 @@ def frag_plus(var n : Nfa; x : Frag) : Frag {
     return Frag(first = x.first, last = b)
 }
 
+[arch(at="../ARCHITECTURE.md#not-carried")]
 def private refuse(var n : Nfa; what : string; node : ReNode?) {
     if (empty(n.err)) {
-        n.err = "{what} at offset {node.at.x} does not fit a DFA (flex spells this with trailing context)"
+        n.err = "{what} at offset {node.at.x} does not fit a DFA and is not carried by dasFlex"
     }
 }
 
