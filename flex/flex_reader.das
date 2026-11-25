@@ -40,7 +40,7 @@ def private peek(s : RScan; k : int = 0) : int => s.pos + k < length(s.d) ? int(
 def private is_blank(c : int) : bool => c == ' ' || c == '\t'
 
 def private is_ident(c : int; first : bool) : bool =>
-    is_alpha(c) || c == '_' || (!first && is_number(c))
+    c == '_' || (first ? is_alpha(c) : is_alnum(c))
 
 def private skip_blanks(var s : RScan) {
     while (is_blank(peek(s))) {

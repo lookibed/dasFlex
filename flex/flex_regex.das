@@ -75,7 +75,7 @@ def frag_set(var n : Nfa; cset : CharSet) : Frag {
     let b = new_state(n)
     var run_lo = -1
     for (c in range(257)) {
-        let inside = c < 256 && (cset[c >> 5] & uint(1 << (c & 31))) != 0u
+        let inside = c < 256 && is_char_in_set(c, cset)
         if (inside && run_lo < 0) {
             run_lo = c
         } elif (!inside && run_lo >= 0) {
