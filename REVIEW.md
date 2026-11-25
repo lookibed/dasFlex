@@ -47,6 +47,11 @@ match - a pass for line and column - is a defect** - they count newlines on the 
 file differs from the hand-written lexer in `c_lex_compare.das` (`--mode probe`) is a defect** - run
 both with `--dump` and diff.
 
+**A diff that edits `examples/c_lexer/c_lexer_goto.das` or `examples/c_lexer/c_lexer_variants.das`
+by hand, or changes the rules of `c_next` in `c_lexer.das` without running
+`examples/c_lexer/gen_variants.das`, is a defect** - the two files are the generator's output, one
+copy of the rules per scanner shape.
+
 **A diff that gives a front end - the `%flex~` reader or a new one - its own table builder, its own
 scanner emission, or a path to the tables that does not pass a `FlexSpec` to `flex_generate`, is a
 defect** - the two forms of a lexer must give the same tables and tokens (`ARCHITECTURE.md#reader`).

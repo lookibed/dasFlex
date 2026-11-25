@@ -25,8 +25,9 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
   the scanner loop, in table or goto mode. The only file that touches the AST of a rule set.
 - `flex/flex_reader.das` - the `%flex~` reader macro: flex-like text to the source of a
   `[flex_text]` function (`flex_reader_source`). Text in, text out; no regex, no tables.
-- `examples/c_lexer/` - the C11 lexer on dasFlex (`c_lexer.das`), its goto-mode twin, the same rules
-  in `%flex~` form (`c_lexer_reader.das`), a demo and the comparison and timing driver.
+- `examples/c_lexer/` - the C11 lexer on dasFlex (`c_lexer.das`), the same rules under the other
+  scanner shapes (`c_lexer_goto.das`, `c_lexer_variants.das`, written by `gen_variants.das`), the
+  same rules in `%flex~` form (`c_lexer_reader.das`), a demo and the comparison and timing driver.
 - `tests/` - the package's dastest tests.
 - `tutorials/` - the JSON lexer as `[flex]` rules (01) and as `%flex~` text (02), a config lexer
   reading capture groups (03).
