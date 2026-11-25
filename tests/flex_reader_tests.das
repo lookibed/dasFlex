@@ -235,6 +235,16 @@ def test_errors(t : T?) {
     }
 }
 
+[test(description = "reader text with CRLF line ends reads as with LF: the carriage returns are dropped, an error keeps its line")]
+def test_crlf_text(t : T?) {
+    let clean = replace(reader_module("D  [0-9]\n", "\"a\"  \{ emit(A) \}\n\{D\}+\n"), "\n", "\r\n")
+    t |> equal(compile_issues("crlf1.das", clean), "")
+    let bad = replace(reader_module("", "\"a\"  \{ emit(A) \}\n<NOPE>b\n"), "\n", "\r\n")
+    let issues = compile_issues("crlf2.das", bad)
+    t |> success(find(issues, "<NOPE>: no such start condition") >= 0, issues)
+    t |> success(find(issues, "crlf2.das:9:") >= 0, issues)
+}
+
 //! a module with a `[flex]` function whose body is `body`, starting at line 5
 def private flex_module(body : string) : string =>
     "options gen2\nrequire flex/flex_macro\n[flex]\ndef bad(var lx : FlexLexer) : bool \{\n{body}\}\n"

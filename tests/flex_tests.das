@@ -472,6 +472,26 @@ def test_error_bad_utf8(t : T?) {
     }
 }
 
+[test(description = "the error text names a control byte, a byte that leads no UTF-8 character, the end of input, and leaves out the file when there is none")]
+def test_error_text_forms(t : T?) {
+    for (src, want in ["a\x01", "a\x7F", "a\xC0\x80", "a\xC1\xBF", "a\xF5\x80\x80\x80", "a\xFF"],
+            ["control byte 1", "control byte 127", "byte 192", "byte 193", "byte 245",
+             "byte 255"]) {
+        var lx : FlexLexer
+        flex_open(lx, src, "t.txt")
+        while (mini(lx)) {
+        }
+        t |> equal(lx.err, "t.txt:1:2: unexpected {want}")
+    }
+    var lx : FlexLexer
+    flex_open(lx, "x §")
+    while (mini(lx)) {
+    }
+    t |> equal(lx.err, "1:3: unexpected '§'")
+    flex_open(lx, "")
+    t |> equal(flex_error_text(lx), "1:1: unexpected end of input")
+}
+
 [test(description = "every explicit shape - table mode with the if, goto and tree dispatch, goto mode with the same three - gives the tokens, lines, columns and errors of the table-mode call matcher")]
 def test_shape_equivalence(t : T?) {
     let src = "if (x1 == 42) /* c\n * / */ y =\tiff;\n\n  z-1 /* a\nb\nc */ w"
@@ -771,6 +791,22 @@ def test_group_match_once(t : T?) {
     while (groups_cached(lx)) {
     }
     t |> equal(lx.groups_re, 0ul)
+}
+
+[test(description = "group and group_span with an index below 0 or past the regex's last group panic naming the index and the group count")]
+def test_group_index_out_of_range(t : T?) {
+    var re <- flex_group_regex("([a-z]+)=([0-9]+)")
+    var lx : FlexLexer
+    flex_open(lx, "ab=12")
+    flex_consume(lx, 0, 5)
+    t |> equal(flex_group(lx, re, 2), "12")
+    for (index in [3, -1]) {
+        let why = panic_text() $ {
+            let span = flex_group_span(lx, re, index)
+            feint("{span}")
+        }
+        t |> success(find(why, "group({index}): the rule's regex has 2 groups") >= 0, why)
+    }
 }
 
 [flex]
