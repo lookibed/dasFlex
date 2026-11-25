@@ -714,7 +714,7 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
         errors := "[flex] body has no rules"
         return false
     }
-    if (shape.matcher == "inline" && length(spec.rules) > 254) {
+    if (shape.mode == "table" && shape.matcher == "inline" && length(spec.rules) > 254) {
         errors := "[flex] matcher = inline carries at most 254 rules in its merged table"
         return false
     }

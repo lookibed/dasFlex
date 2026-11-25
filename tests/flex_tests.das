@@ -2,6 +2,10 @@ options gen2
 options indenting = 4
 
 require dastest/testing_boost public
+require daslib/rtti
+require daslib/ast
+require daslib/debugger
+require strings
 require flex/flex_macro
 
 enum TTok {
@@ -798,3 +802,57 @@ def test_group_with_text_emit_begin(t : T?) {
     t |> equal(group_log, ["ab<|ab|ab<", "12|12>", "cd<|cd|cd<", "3|3>"])
     t |> success(!lx.failed)
 }
+
+//! a module with a lexer of `nrules` keyword rules `k0`, `k1`, ... under `shape` and an exported
+//! `run` that lexes `src` and packs the kinds three decimal digits each
+def private many_rules_module(nrules : int; shape, src : string) : string {
+    return build_string() $(var w) {
+        w |> write("options gen2\nrequire flex/flex_macro\n[flex({shape})]\n")
+        w |> write("def many(var lx : FlexLexer) : bool \{\n")
+        for (i in range(nrules)) {
+            w |> write("    rule(\"k{i}\") \{ lx |> emit({i}) \}\n")
+        }
+        w |> write("    rule(\" +\") \{ \}\n\}\n")
+        w |> write("[export]\ndef run(var out : int?) \{\n    var lx : FlexLexer\n")
+        w |> write("    flex_open(lx, \"{src}\")\n    *out = 0\n")
+        w |> write("    while (many(lx)) \{\n        *out = *out * 1000 + lx.tok.kind\n    \}\n\}\n")
+    }
+}
+
+//! compiles `text` as the virtual file `name` and calls its `run`: the issues, or "" and the result
+def private compile_and_run(name, text : string) : tuple<issues : string; result : int> {
+    var res = (issues = "", result = -1)
+    var inscope access <- make_file_access("")
+    set_file_source(access, name, text)
+    using() $(var mg : ModuleGroup) {
+        using() $(var cop : CodeOfPolicies) {
+            cop.threadlock_context = true
+            compile_file(name, access, unsafe(addr(mg)), cop) $(ok; program; issues) {
+                res.issues = string(issues)
+                return if (!ok)
+                simulate(program) $(sok; context; serrors) {
+                    res.issues = sok ? "" : string(serrors)
+                    return if (!sok)
+                    var out = 0
+                    unsafe {
+                        *context |> invoke_in_context("run", addr(out))
+                    }
+                    res.result = out
+                }
+            }
+        }
+    }
+    return res
+}
+
+[test(description = "the 254-rule cap binds the inline table matcher only: goto mode lexes 261 rules, table mode refuses them")]
+def test_many_rules(t : T?) {
+    let src = "k7 k259 k130"
+    let in_goto = compile_and_run("many_goto.das", many_rules_module(260, "mode = \"goto\"", src))
+    t |> equal(in_goto.issues, "")
+    t |> equal(in_goto.result, 7259130)
+    let table_src = many_rules_module(260, "mode = \"table\"", src)
+    let in_table = compile_and_run("many_table.das", table_src)
+    t |> success(find(in_table.issues, "at most 254 rules") >= 0, in_table.issues)
+}
+
