@@ -8,8 +8,9 @@ require daslib/strings_boost
 require daslib/regex
 
 // The scanner the generated code drives: input as raw bytes, a cursor, the token the last rule
-// emitted, and line/column kept by counting newlines in each consumed span. Nothing here allocates;
-// `text()` is the one call that builds a string, on request.
+// emitted, and line/column kept by counting newlines in each consumed span. Matching and taking a
+// token allocate nothing; `text()`, the group calls and the error text build strings, each only
+// when a rule body or a failed match asks.
 
 //! A token as the parser sees it: the kind the rule emitted, its byte span and where it starts.
 struct FlexToken {
