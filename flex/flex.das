@@ -97,9 +97,10 @@ def private flex_groups_of(var lx : FlexLexer; var re : Regex) {
     }
     let matched = regex_match(re, text(lx), 0) == lx.tok.len
     lx.groups |> resize(length(re.groups))
+    let at = lx.tok.start
     for (i, g in count(), re.groups) {
         let span = g._0
-        lx.groups[i] = matched && span.x >= 0 ? range(span.x + lx.tok.start, span.y + lx.tok.start) : range(-1, -1)
+        lx.groups[i] = matched && span.x >= 0 ? range(span.x + at, span.y + at) : range(-1, -1)
     }
     lx.groups[0] = range(lx.tok.start, lx.tok.start + lx.tok.len)
 }

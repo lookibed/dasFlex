@@ -396,7 +396,8 @@ def test_minimized_start_states(t : T?) {
     let same <- flex_tables([FlexRule(pattern = "ab|cb", conditions = [0, 1])], 2)
     t |> equal(same.nstates, 3)
     t |> equal(same.start, [0, 0])
-    let diff <- flex_tables([FlexRule(pattern = "ab|cb", conditions = [0, 1]), FlexRule(pattern = "d", conditions = [0])], 2)
+    let diff <- flex_tables([FlexRule(pattern = "ab|cb", conditions = [0, 1]),
+                             FlexRule(pattern = "d", conditions = [0])], 2)
     t |> equal(diff.nstates, 5)
     t |> equal(diff.start, [0, 1])
 }

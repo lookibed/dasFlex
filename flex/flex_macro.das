@@ -142,12 +142,14 @@ def private fail_at(var spec : FlexSpec; msg : string; site : Expression const?)
 
 //! a rule whose body calls `group` needs a capture group in its regex, and every constant index
 //! asked for; a regex that does not parse is left to `flex_tables`, which names it
-def private check_groups(var spec : FlexSpec; pattern : string; group_max : int; site : Expression const?) {
+def private check_groups(var spec : FlexSpec; pattern : string; group_max : int;
+                         site : Expression const?) {
     var re : Regex
     return if (!regex_compile(re, flex_group_pattern(pattern)))
     let ngroups = length(re.groups) - 1
     if (ngroups == 0) {
-        fail_at(spec, "rule(\"{pattern}\"): group() asks for a capture group, the regex has none", site)
+        fail_at(spec, "rule(\"{pattern}\"): group() asks for a capture group, the regex has none",
+                site)
     } elif (group_max > ngroups) {
         fail_at(spec, "rule(\"{pattern}\"): group({group_max}) asks for a group the regex does not have ({ngroups})", site)
     }
@@ -731,7 +733,8 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
     }
     for (arm in spec.arms) {
         continue if (empty(arm.group_re))
-        return false if (!regex_global(arm.group_re, spec.rules[arm.rule].pattern, arm.site.at, errors))
+        let pattern = spec.rules[arm.rule].pattern
+        return false if (!regex_global(arm.group_re, pattern, arm.site.at, errors))
     }
     func.body = make_scanner_body(spec, t, lx, shape.mode, shape.dispatch, shape.matcher, func.at)
     return true

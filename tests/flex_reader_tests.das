@@ -199,13 +199,15 @@ def test_group_errors(t : T?) {
     t |> run("reader: a regex without groups") @(t : T?) {
         let issues = compile_issues("g1.das",
                                     reader_module("", "\"a\"  \{ emit(A) \}\n[0-9]+   \{ print(group(1)) \}\n"))
-        t |> success(find(issues, "group() asks for a capture group, the regex has none") >= 0, issues)
+        t |> success(find(issues, "group() asks for a capture group, the regex has none") >= 0,
+                     issues)
         t |> success(find(issues, "g1.das:9:") >= 0, issues)
     }
     t |> run("reader: an index past the last group") @(t : T?) {
         let issues = compile_issues("g2.das",
                                     reader_module("", "\"a\"  \{ emit(A) \}\n([0-9]+)   \{ print(group_span(2)) \}\n"))
-        t |> success(find(issues, "group(2) asks for a group the regex does not have (1)") >= 0, issues)
+        t |> success(find(issues, "group(2) asks for a group the regex does not have (1)") >= 0,
+                     issues)
         t |> success(find(issues, "g2.das:9:") >= 0, issues)
     }
     t |> run("[flex]: a regex without groups") @(t : T?) {
@@ -213,7 +215,8 @@ def test_group_errors(t : T?) {
             + "    rule(\"a\") \{\n        lx |> emit(1)\n    \}\n"
             + "    rule(\"[0-9]+\") \{\n        print(lx |> group(1))\n    \}\n\}\n")
         let issues = compile_issues("g3.das", src)
-        t |> success(find(issues, "group() asks for a capture group, the regex has none") >= 0, issues)
+        t |> success(find(issues, "group() asks for a capture group, the regex has none") >= 0,
+                     issues)
         t |> success(find(issues, "g3.das:8:") >= 0, issues)
     }
 }
