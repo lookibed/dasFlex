@@ -10,6 +10,7 @@ module c_lexer shared public
 
 require flex/flex_macro public
 require strings
+require daslib/enum_trait
 
 enum CTok {
     IDENTIFIER = 128
@@ -135,20 +136,11 @@ let KEYWORDS <- {
     "while" => CTok.WHILE
 }
 
-let private TOKEN_NAMES <- ["IDENTIFIER", "I_CONSTANT", "F_CONSTANT", "STRING_LITERAL", "FUNC_NAME",
-                            "SIZEOF", "PTR_OP", "INC_OP", "DEC_OP", "LEFT_OP", "RIGHT_OP", "LE_OP",
-    "GE_OP", "EQ_OP", "NE_OP", "AND_OP", "OR_OP", "MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN",
-    "ADD_ASSIGN", "SUB_ASSIGN", "LEFT_ASSIGN", "RIGHT_ASSIGN", "AND_ASSIGN", "XOR_ASSIGN",
-    "OR_ASSIGN", "TYPEDEF_NAME", "ENUMERATION_CONSTANT", "TYPEDEF", "EXTERN", "STATIC", "AUTO",
-    "REGISTER", "INLINE", "CONST", "RESTRICT", "VOLATILE", "BOOL", "CHAR", "SHORT", "INT", "LONG",
-    "SIGNED", "UNSIGNED", "FLOAT", "DOUBLE", "VOID", "COMPLEX", "IMAGINARY", "STRUCT", "UNION",
-    "ENUM", "ELLIPSIS", "CASE", "DEFAULT", "IF", "ELSE", "SWITCH", "WHILE", "DO", "FOR", "GOTO",
-    "CONTINUE", "BREAK", "RETURN", "ALIGNAS", "ALIGNOF", "ATOMIC", "GENERIC", "NORETURN",
-    "STATIC_ASSERT", "THREAD_LOCAL"]
+//! the yacc name of every named token kind
+let private TOKEN_NAMES <- { for (k in each(type<CTok>)); int(k) => string(k) }
 
 //! the yacc name of a token kind; a single-character token prints as itself
-def c_token_name(kind : int) : string =>
-    kind >= 128 && kind - 128 < length(TOKEN_NAMES) ? TOKEN_NAMES[kind - 128] : to_char(kind)
+def c_token_name(kind : int) : string => TOKEN_NAMES?[kind] ?? to_char(kind)
 
 //! identifier, keyword, or typedef name: the rule action's decision
 def c_word_kind(var lx : FlexLexer) : int {

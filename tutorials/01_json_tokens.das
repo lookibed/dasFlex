@@ -12,6 +12,7 @@ options gen2
 options indenting = 4
 
 require flex/flex_macro
+require daslib/enum_trait
 
 // The token kinds the parser will see. Any enum works: emit() stores int(kind).
 enum JTok {
@@ -85,11 +86,10 @@ def json_lexer(var lx : FlexLexer) : bool {
     }
 }
 
-def kind_name(kind : int) : string {
-    let names <- ["", "LBRACE", "RBRACE", "LBRACKET", "RBRACKET", "COLON", "COMMA", "STRING",
-                  "NUMBER", "TRUE", "FALSE", "NULL"]
-    return names[kind]
-}
+// enum_trait's each() walks an enum's members and string() names one: the kind's name to print
+let KIND_NAMES <- { for (k in each(type<JTok>)); int(k) => string(k) }
+
+def kind_name(kind : int) : string => KIND_NAMES?[kind] ?? "{kind}"
 
 [export]
 def main() {
