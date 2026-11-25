@@ -43,7 +43,10 @@ the union automaton reads every byte once.
 After subset construction, Hopcroft's partition refinement merges every pair of DFA states that
 accept the same rule and move into equivalent states on every byte class, so the tables are the
 minimal automaton for the rule set; the start state of each condition keeps its identity, -1 remains
-the only dead state, and the byte classes are untouched. Minimization sits after subset construction,
+the only dead state, and the byte classes are untouched. The refinement runs over the DFA plus one
+virtual dead state standing for -1, every move to itself, alone in its first block - the first
+partition groups the live states by the rule they accept - so its block never meets a live state;
+the blocks are renumbered in order of their lowest old state, and the start states follow. Minimization sits after subset construction,
 in `flex_tables`, because equivalence is a property of the deterministic automaton (subset
 construction turns distinct NFA paths into distinct state sets even when their futures coincide), and
 every front end and scanner shape then reads the smaller tables.
@@ -80,7 +83,8 @@ condition fails the compile with the rule's text in the message; a start conditi
 
 `mode="table"` drives the DFA from the globals; `mode="goto"` emits it as straight-line code - a
 label per state, a byte read, range tests per class and a `goto` to the next state - the way re2c and
-Ragel generate scanners. The default follows the tier (below): the table function stays small whatever
+Ragel generate scanners. A byte class is a run of consecutive bytes (its cuts are edge boundaries),
+so the goto code tests a byte against the run's ends and never reads `class_of`. The default follows the tier (below): the table function stays small whatever
 the rule set, the goto code is what LLVM folds best.
 
 In table mode `matcher="inline"` (the default) emits the byte loop into the scanner itself, through
@@ -177,7 +181,7 @@ the scanner. The text ends at the first `%%`, as every reader's does, so the for
 other tools that skip reader text skip all of it; the definitions end at the line `%rules`
 rather than at flex's inner `%%`.
 
-## The symbol table {#symbols}
+## The symbol table
 
 `FlexLexer.symbols : table<string; int>` is the one channel from a parser back into the lexer: a
 C parser puts `typedef` names there and the identifier rule reads it to decide between

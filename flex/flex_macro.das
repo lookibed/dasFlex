@@ -433,14 +433,14 @@ def private after_newline_states(t : FlexTables) : array<bool> {
 
 //! the moves out of state `s`, one byte-range test per class; the `\n` move also counts the newline
 def private make_goto_moves(t : FlexTables; s : int;
-                            lo_of, hi_of : array<int>) : array<ExpressionPtr> {
+                            class_lo_byte, class_hi_byte : array<int>) : array<ExpressionPtr> {
     var moves : array<ExpressionPtr>
     let nl_class = t.class_of[10]
     for (c in range(t.nclasses)) {
         let nx = t.next[s * t.nclasses + c]
         continue if (nx < 0)
-        let lo = lo_of[c]
-        let hi = hi_of[c]
+        let lo = class_lo_byte[c]
+        let hi = class_hi_byte[c]
         if (c == nl_class) {
             moves |> push <| qmacro_block() {
                 if (flex`b == 10) {
@@ -473,24 +473,23 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
     var out : array<ExpressionPtr>
     out |> reserve(t.nstates * 3 + 4)
     let done = t.nstates
-    // a class is a run of bytes; its ends let the code test a byte without reading `class_of`
-    var lo_of, hi_of : array<int>
-    lo_of |> resize(t.nclasses)
-    hi_of |> resize(t.nclasses)
+    var class_lo_byte, class_hi_byte : array<int>
+    class_lo_byte |> resize(t.nclasses)
+    class_hi_byte |> resize(t.nclasses)
     for (c in range(t.nclasses)) {
-        lo_of[c] = 256
-        hi_of[c] = -1
+        class_lo_byte[c] = 256
+        class_hi_byte[c] = -1
     }
     for (b, c in count(), t.class_of) {
-        lo_of[c] = min(lo_of[c], b)
-        hi_of[c] = max(hi_of[c], b)
+        class_lo_byte[c] = min(class_lo_byte[c], b)
+        class_hi_byte[c] = max(class_hi_byte[c], b)
     }
     let after_nl <- after_newline_states(t)
     out |> push <| qmacro_block() {
         goto $i(cond_start)
     }
     for (s in range(t.nstates)) {
-        var moves <- make_goto_moves(t, s, lo_of, hi_of)
+        var moves <- make_goto_moves(t, s, class_lo_byte, class_hi_byte)
         let acc = t.accept[s]
         var lab_s : ExpressionPtr = new ExprLabel(at = t_at, labelName = s)
         out |> emplace(lab_s)
@@ -680,12 +679,9 @@ struct private FlexShape {
     err : string
 }
 
+[arch(at="../ARCHITECTURE.md#two-shapes")]
 def private flex_shape(args : AnnotationArgumentList) : FlexShape {
-    // the default follows the tier the program is compiled for: tables for the interpreter, where
-    // every node costs, straight-line code for the JIT and the exe, where LLVM folds it into switches
     let mode = string_arg(args, "mode", compiling_program().policies.jit_enabled ? "goto" : "table")
-    // the dispatch goes with the mode: a computed goto saves the interpreter the if chain, while
-    // under LLVM the if chain is already a switch and the computed goto adds one over label indices
     var shape = FlexShape(mode = mode,
                           dispatch = string_arg(args, "dispatch", mode == "table" ? "goto" : "if"),
                           matcher = string_arg(args, "matcher", "inline"))

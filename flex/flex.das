@@ -22,7 +22,7 @@ struct FlexToken {
     text : string       //!< the matched text once `text()` built it; "" until then
 }
 
-//! The scanner state. `symbols` is the table a parser fills and a rule consults (C `typedef` names).
+//! The scanner state.
 struct FlexLexer {
     bytes : array<uint8>        //!< the input, one copy made at `flex_open`
     data : uint8 const?         //!< `bytes` as a raw pointer for the inner loop
@@ -35,7 +35,7 @@ struct FlexLexer {
     emitted : bool              //!< the last rule called `emit`
     failed : bool               //!< a byte no rule accepts was met
     file : string
-    symbols : table<string; int>
+    symbols : table<string; int> //!< a parser's channel back into the lexer (C `typedef` names)
     err : string
     groups : array<range>       //!< the capture groups of one token, input offsets; -1 where absent
     groups_start : int          //!< the `tok.start` `groups` belong to

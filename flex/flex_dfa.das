@@ -74,11 +74,10 @@ def build_tables(n : Nfa) : FlexTables {
     t.err = n.err
     return <- t if (!empty(n.err))
     t.nclasses = byte_classes(n, t.class_of)
-    // a representative byte per class, to walk edges by class
-    var rep : array<int>
-    rep |> resize(t.nclasses)
+    var class_rep_byte : array<int>
+    class_rep_byte |> resize(t.nclasses)
     for (b in range(256)) {
-        rep[t.class_of[255 - b]] = 255 - b
+        class_rep_byte[t.class_of[255 - b]] = 255 - b
     }
     var sets : array<array<int>>
     var index : table<string; int>
@@ -104,7 +103,7 @@ def build_tables(n : Nfa) : FlexTables {
         }
         t.accept |> push(acc)
         for (cls in range(t.nclasses)) {
-            let b = rep[cls]
+            let b = class_rep_byte[cls]
             var inscope moved : array<int>
             var inscope seen : table<int>
             for (s in sets[si]) {
@@ -132,12 +131,6 @@ def build_tables(n : Nfa) : FlexTables {
     t.nstates = length(sets)
     return <- t
 }
-
-// Minimization is Hopcroft's partition refinement over the DFA plus one virtual dead state (index
-// `nstates`, every move to itself, standing for -1): the first partition groups states by their `accept`
-// value with the dead state alone, so two states merge only when they accept the same rule and every
-// byte class leads both into one block. The dead state's block never meets a live state, so -1 stays the
-// only dead state; the blocks are renumbered in order of their lowest old state, and `start` follows.
 
 //! the states moving to `to` on class `c` are `from[at[c * n + to]] .. from[at[c * n + to + 1] - 1]`
 struct private Preimage {
@@ -300,6 +293,7 @@ def private refine(t : FlexTables) : array<int> {
 }
 
 //! Merges equivalent states in place. `nclasses` and `class_of` stay as they are; `start` is renumbered.
+[arch(at="../ARCHITECTURE.md#one-automaton")]
 def minimize(var t : FlexTables) {
     return if (!empty(t.err) || t.nstates == 0)
     let blk <- refine(t)
