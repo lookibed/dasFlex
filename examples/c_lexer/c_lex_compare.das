@@ -6,12 +6,14 @@ options indenting = 4
 // `daslib/regex` tried rule by rule. `--dump` prints `NAME<TAB>text<TAB>line` per token after
 // the shared filter (GNU extension skipping, adjacent string literals joined, typedef tracking)
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
+// `--count` (with `--time N` and `--mode flex` or `flex-inline`) times the scanner alone: the lexer is opened outside the timer and
+// the loop counts tokens, with no token array and no `text()` per token.
 //
 // `flex` (also `flex-inline`) is the default shape, the inline matcher with goto dispatch; the
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
 // `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`).
 //
-//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N) files...
+//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N [--count]) files...
 //   (`-- --help` lists the flags)
 
 require c_lexer
@@ -435,6 +437,26 @@ def lex_mode(mode : string; text : string; typedefs : table<string; int>;
     }
 }
 
+//! the default shape's scanner alone, `passes` times: the lexer is opened outside the timer, the loop counts tokens
+def time_count(path : string; text : string; typedefs : table<string; int>; passes : int) {
+    var inscope times : array<double>
+    times |> reserve(passes)
+    var ntok = 0
+    for (_k in range(passes)) {
+        var lx : FlexLexer
+        lx.symbols := typedefs
+        flex_open(lx, text)
+        ntok = 0
+        let t0 = ref_time_ticks()
+        while (c_next(lx)) {
+            ntok++
+        }
+        times |> push(double(get_time_usec(t0)) / 1000.0lf)
+    }
+    sort(times)
+    print("TIME flex+count {path} median_ms={times[length(times) / 2]} min={times[0]} max={times[length(times) - 1]} bytes={length(text)} tokens={ntok}\n")
+}
+
 [CommandLineArgs]
 struct CompareArgs {
     @clarg_doc = "the lexer: flex, table, flex-call, flex-dgoto, flex-dtree, goto, goto-dgoto, reader, probe or regex"
@@ -443,6 +465,8 @@ struct CompareArgs {
     dump : bool
     @clarg_doc = "lex each file N times and print the median, min and max milliseconds"
     time : int
+    @clarg_doc = "with --time and --mode flex or flex-inline: time the scanner alone, counting tokens (no token array, no text per token)"
+    count : bool
     @clarg_positional
     @clarg_doc = "the preprocessed C files"
     files : array<string>
@@ -453,6 +477,10 @@ def main() : int {
     var args = CompareArgs()
     let rc = parse_args_with_help(args, "c_lex_compare")
     return rc if (rc >= 0)
+    if (args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline"))) {
+        print("usage: c_lex_compare -- --mode flex|flex-inline --time N --count files...\n")
+        return 1
+    }
     var rules <- regex_rules()
     for (path in args.files) {
         let text = fread(path)
@@ -476,7 +504,9 @@ def main() : int {
         } else {
             print("{path}: {args.mode}: {length(toks)} tokens, {length(seed)} typedefs\n")
         }
-        if (args.time > 0) {
+        if (args.count) {
+            time_count(path, text, typedefs, args.time)
+        } elif (args.time > 0) {
             var inscope times : array<double>
             times |> reserve(args.time)
             for (_k in range(args.time)) {

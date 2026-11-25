@@ -1,31 +1,66 @@
-# dasFlex performance ledger (wave 2)
+# dasFlex performance ledger
 
-Every row is one step with its measured effect. Numbers come from one exclusive run per column set
-(`heavy --exclusive`, quiet machine); a row without numbers has not been measured yet. Interp and JIT are
+## Where the speed stands
+
+Driver `examples/c_lexer/c_lex_compare.das` for the daslang rows; inputs doom_am_map.i (81 647 bytes,
+17 207 raw tokens), doom_p_mobj.i (74 386, 13 474), wasm3_m3_parse.i (83 685, 16 484), the same token
+counts on every driver. One run, alone on a quiet machine (cpu busy 2%);
+daslang 0.6.6, the library at 0aa7ad4. Each cell is ms per pass: the median of 3 rounds, each round
+the median of 9 passes in one process, one process per driver and file, the driver order reversed
+every other round; the round range stays within 4% of the cell except hand-written JIT (up to 31%)
+and dasFlex token-array JIT (5%).
+
+| driver | what the timed loop does | doom_am_map.i | doom_p_mobj.i | wasm3_m3_parse.i |
+|---|---|---|---|---|
+| dasFlex, count only, interp | `--mode flex --count`: the scanner counts tokens; the identifier rule builds the word's string and looks it up as keyword and typedef name | 9.261 | 8.133 | 9.640 |
+| dasFlex, count only, JIT | same, `-jit` | 0.714 | 0.642 | 0.736 |
+| dasFlex, token array, interp | `--mode flex`: the above plus one indirect block call per token (`invoke(scan, lx)`; `--count` calls `c_next` directly), `text()` per token and a `{kind, text, line}` array; opens the lexer (typedef table copied) inside the timer | 10.934 | 9.259 | 11.055 |
+| dasFlex, token array, JIT | same, `-jit` | 1.086 | 0.937 | 1.092 |
+| hand-written lexer, interp | `--mode probe`: a byte loop, keyword and typedef lookup by hash, a string slice per token, the same array; a one-byte punctuator allocates three slices (3-char, 2-char, emitted) and does two hash lookups | 6.514 | 5.524 | 6.377 |
+| hand-written lexer, JIT | same, `-jit` | 1.041 | 0.811 | 1.305 |
+| hand-written lexer, C `-O2` | a C port of `--mode probe`: the same token stream, not the same work - byte compares for punctuators, one `malloc` per token text, the array freed inside the timer | 1.542 | 1.046 | 0.794 |
+| chibicc `tok`, C `-O2` | chibicc's `tokenize()`, punctuators and prefixes picked by the first byte (local edits) | 2.237 | 1.814 | 2.174 |
+| chibicc `fast`, C `-O2` | the same plus an arena allocator, ASCII character classes and the identifier hash taken while lexing | 1.953 | 1.600 | 1.927 |
+
+- chibicc `tok` does work no dasFlex row does: a `calloc` per token, every string literal decoded
+  into a fresh `calloc` buffer plus a `calloc`'d array type (`array_of` / `new_type`), and line numbers in a second pass over the token list
+  (`add_line_numbers`); it does not tell keywords from identifiers and has no typedef lookup. Both
+  chibicc rows are a C driver timing `tokenize()` alone over a file read outside the timer.
+- chibicc `fast` puts the token and the string buffer on a bump pointer into 1 MB arena blocks and
+  tests character classes by ASCII compares instead of `<ctype.h>` calls; each string literal still
+  pays the `array_of` / `new_type` `calloc`, and the string decode and the line pass stay. It also
+  takes each identifier's FNV hash inside the timer, while the hash's only consumer (`is_keyword`)
+  runs outside it.
+- Ratios the table supports: chibicc `fast` over dasFlex count-only JIT 2.74 / 2.49 / 2.62, over
+  dasFlex token-array JIT 1.80 / 1.71 / 1.76; dasFlex interp over JIT 13.0 / 12.7 / 13.1 (count only).
+
+## Steps
+
+Every row is one step with its measured effect. Numbers come from one run per column set, alone on a
+quiet machine; a row without numbers has not been measured yet. Interp and JIT are
 separate columns; a step that gave nothing stays in the table.
 
 | step | hypothesis | interp before/after | jit before/after | verdict |
 |---|---|---|---|---|
-| 0 base | wave-1 driver is fair: both lexers build one string per token into a `Tok` array (profile: 17 207 strings each per pass) | - | - | base of wave 2 |
+| 0 base | the driver is fair: both lexers build one string per token into a `Tok` array (profile: 17 207 strings each per pass) | - | - | base of steps 1-6 |
 | 2 one-line actions | `emit` is a call per token and the identifier string is built twice (once for the keyword/typedef lookup, once by the driver for the token); the macro rewrites `emit` into its two field writes, `text()` caches the string on the token | 15.60 -> 16.25 ms (+4%); BASE flex -> FINAL flex-call, both call matcher + if chain, the pair also carries the other FINAL changes to shared code | 1.550 -> 1.436 ms (-7%); same pair | token streams identical; JIT IR already inlined `emit`, so this is an interpreter step |
 | 1 rule dispatch | the `if (rule == i)` chain costs ~20 comparisons per token (profile: `c_next` own time 40%); a computed `goto` into a label per rule, or a binary tree, is cheaper | 16.25 -> 12.18 ms (-25%); FINAL flex-call (if) -> flex-dgoto (goto), both matcher = call; flex-dtree 12.16 | 1.436 -> 1.356 ms (-6%, dgoto round range 1.307-1.820); flex-dtree 1.354 | shapes `dispatch = "if" / "goto" / "tree"` added; token streams identical on all shapes |
 | 3 inline matcher | `flex_match_table` is a call per token across LLVM units with 9 loads and 3 bounds checks per byte, and `flex_consume` re-reads the token; `matcher = "inline"` emits the byte loop into the scanner over one merged table (`next * 256 + accept + 1`) with raw pointers and counts newlines on the way (`\n` now a class of its own) | 12.18 -> 12.36 ms (+1%, within round range); FINAL flex-dgoto -> FINAL flex, both dispatch = goto | 1.356 -> 1.210 ms (-11%) | token streams identical on all shapes |
 | 4 goto without second pass | goto mode calls `flex_consume`, a second walk over the token's bytes for line and column; the `\n` move counts the newline on the way and only accepting states some `\n` move reaches copy the count, so every other state pays nothing | 22.61 -> 22.78 ms (+1%); BASE goto -> FINAL goto, the pair also carries step 2 | 1.291 -> 1.082 ms (-16%) | token streams identical on all shapes |
 | 5 keyword lookup without the hash | `c_word_kind` hashes the word into `KEYWORDS` and then into `lx.symbols`; keywords bucketed by (length, first byte) and compared with `text_is` skip the first hash for most identifiers | not kept, no number | not kept, no number | not kept: a directional check showed no clear gain (interpreter a little slower, JIT within noise) - the typedef lookup still hashes every identifier and the driver builds the string per token anyway |
-| 6 defaults | `[flex]` with no arguments takes the inline matcher and goto dispatch; the old default (call + if) stays as `--mode flex-call`, `flex-inline` is now `flex` | 15.60 -> 12.36 ms (-21%); BASE flex -> FINAL flex | 1.550 -> 1.210 ms (-22%); same pair | token streams identical on all seven shapes; the new default is 21% faster interp and 22% faster jit than the wave-1 default on this file; still 1.9x behind the hand-written lexer in the interpreter, within 0.93-1.28x of it under JIT (0.93 on doom_am_map, 1.28 on doom_p_mobj, 1.27 on wasm3_m3_parse) |
-| 7 mode by tier | the interpreter is fastest on the table shape and the JIT on the goto shape (wave-2 run), and the macro sees the tier in `compiling_program().policies.jit_enabled`; the default `mode` now follows it, `mode = "table"\|"goto"` overrides | 14.89 -> 11.76 ms (-21%); BASE flex -> FINAL flex, which is the table shape here (FINAL table 11.67); hand-written 6.50, FINAL flex 1.81x of it | jit split 1.399 -> 1.143 ms (-18%), hand-written 1.032 (1.11x); jit `--jit-split-modules=0` 1.368 -> 1.125 (-18%), hand-written 1.060 (1.06x); exe 1.727 -> 1.655 (-4%), hand-written 1.634 (1.01x) | token streams identical in both tiers; the module cache keeps one record per tier (a `-jit` run after an interpreter run recompiles the module), checked on the tutorial. The default under JIT is goto mode with goto dispatch: 12% slower than `goto` with if dispatch (1.017) and 4% faster than the table (1.185); in the exe the table (1.502) beats both goto shapes (default 1.655, `goto` 1.600), so the exe default is not the fastest shape in this run |
-| 8 dispatch by tier | under JIT the goto shape with the `if` chain beats goto mode with computed-goto dispatch (the step-7 JIT default) by 6-14% (default/`goto` 1.06-1.14x, jit-split and jit-mono, three files; measured in the `TIMING-dasflex-proofs` run, `measure2/summary.md`), because LLVM already turns the chain into a `switch` and the computed goto adds a `switch` over label indices; table mode keeps computed-goto dispatch (step 1: -25% interp). The default `dispatch` now goes with the mode: `goto` for table, `if` for goto; an explicit `dispatch =` overrides | no change by design, table mode unchanged: 10.754 -> 10.743 ms (0%); V7 flex -> V8 flex, run `TIMING-dasflex-wave3a` | 1.177 -> 1.048 ms (-11%; V7 round range 0.980-1.181); doom_p_mobj -16%, wasm3_m3_parse -10% | kept: token streams identical on every version, shape and tier; the JIT default now runs with the `goto` shape (V8 flex 1.048, `goto` 1.079) |
+| 6 defaults | `[flex]` with no arguments takes the inline matcher and goto dispatch; the old default (call + if) stays as `--mode flex-call`, `flex-inline` is now `flex` | 15.60 -> 12.36 ms (-21%); BASE flex -> FINAL flex | 1.550 -> 1.210 ms (-22%); same pair | token streams identical on all seven shapes; the new default is 21% faster interp and 22% faster jit than the old default on this file; against the hand-written lexer, the table above gives 1.68-1.73x interp and 0.84-1.16x JIT (token-array driver, three files) |
+| 7 mode by tier | the interpreter is fastest on the table shape and the JIT on the goto shape (steps 1-6), and the macro sees the tier in `compiling_program().policies.jit_enabled`; the default `mode` now follows it, `mode = "table"\|"goto"` overrides | 14.89 -> 11.76 ms (-21%); BASE flex -> FINAL flex, which is the table shape here (FINAL table 11.67); hand-written 6.50, FINAL flex 1.81x of it | jit split 1.399 -> 1.143 ms (-18%), hand-written 1.032 (1.11x); jit `--jit-split-modules=0` 1.368 -> 1.125 (-18%), hand-written 1.060 (1.06x); exe 1.727 -> 1.655 (-4%), hand-written 1.634 (1.01x) | token streams identical in both tiers; the module cache keeps one record per tier (a `-jit` run after an interpreter run recompiles the module), checked on the tutorial. The default under JIT is goto mode with goto dispatch: 12% slower than `goto` with if dispatch (1.017) and 4% faster than the table (1.185); in the exe the table (1.502) beats both goto shapes (default 1.655, `goto` 1.600), so the exe default is not the fastest shape in this run |
+| 8 dispatch by tier | under JIT the goto shape with the `if` chain beats goto mode with computed-goto dispatch (the step-7 JIT default) by 6-14% (default/`goto` 1.06-1.14x, jit-split and jit-mono, three files; measured with step 7), because LLVM already turns the chain into a `switch` and the computed goto adds a `switch` over label indices; table mode keeps computed-goto dispatch (step 1: -25% interp). The default `dispatch` now goes with the mode: `goto` for table, `if` for goto; an explicit `dispatch =` overrides | no change by design, table mode unchanged: 10.754 -> 10.743 ms (0%); V7 flex -> V8 flex | 1.177 -> 1.048 ms (-11%; V7 round range 0.980-1.181); doom_p_mobj -16%, wasm3_m3_parse -10% | kept: token streams identical on every version, shape and tier; the JIT default now runs with the `goto` shape (V8 flex 1.048, `goto` 1.079) |
 | 9 DFA minimization | subset construction leaves states with identical futures (one per NFA path, e.g. per keyword/operator branch); Hopcroft minimization in flex_tables merges them, shrinking the table and the goto code without changing a token | 10.743 -> 10.711 ms (0%); V8 flex -> V9 flex (table mode); `table` 10.642 -> 10.981 (+3%), `goto` 21.090 -> 21.181 (0%) | 1.048 -> 1.008 ms (-4%, V9 round range 0.929-1.163, within noise); wasm3_m3_parse -4%, doom_p_mobj +15% (0.769 -> 0.882, all three rounds); `goto` 1.079 -> 1.013 (-6%) | C11 lexer 193 -> 115 states, merged table 14282 -> 8510 entries (74 classes); token streams identical on flex/table/goto/flex-call over the five C inputs |
 | 10 groups by re-match | `group(n)` / `group_span(n)` re-run the rule's own anchored regex once per token, only in rules whose bodies call them; the automaton, the scanner loop and the token stream are untouched, so the token stream and the speed of rules without groups do not change | 10.471 -> 10.254 ms (-2%); A flex -> B flex (table mode); `goto` 20.874 -> 20.901 (0%), `reader` 10.421 -> 10.406 (0%); doom_p_mobj -2%, wasm3_m3_parse -1% | 1.024 -> 1.031 ms (+1%; A round range 0.882-1.033); `goto` 1.043 -> 1.039 (0%), `reader` 1.066 -> 1.054 (-1%); doom_p_mobj -1%, wasm3_m3_parse +4%; the unchanged hand-written control `probe` moved +10% / +9% / -1% between the same two binaries, the noise floor of this run | kept: rules without `group` pay nothing within noise, B/A 0.93-1.04 over flex/goto/reader, three files, both tiers; token streams of A and B identical on flex/goto/reader/probe over the three inputs |
 
-Measured cells: doom_am_map.i (81 647 bytes), median of 3 rounds of in-process medians (`--time 9`), daslang 0.6.6, BASE = ee7eec8,
-FINAL = 40f12d8. Run `TIMING-dasflex-wave2`, 2026-11-22 21:28 MSK, `heavy --exclusive`, machine quiet (cpu busy 1%).
-Step 7: same file and method, FINAL = 4c0c30a; run `TIMING-dasflex-proofs`, 2026-11-23 00:09 MSK, `heavy --exclusive`, machine quiet
-(cpu busy 2%); raw lines and tables kept locally, not in the repository.
-Step 10: same file and method, A = b18ebd2, B = 58f9d63 (A/B order flipped every round); run `TIMING-dasflex-wave3b`,
-2026-11-24 15:37 MSK, `heavy --exclusive`, machine quiet (cpu busy 1%); raw lines and tables kept locally, not in the repository.
+Measured cells: doom_am_map.i, median of 3 rounds of in-process medians (`--time 9`), daslang 0.6.6, each
+column set one run alone on a quiet machine (cpu busy 1-2%). Steps 1-6: BASE = ee7eec8, FINAL = 40f12d8. Step 7:
+FINAL = 4c0c30a. Step 10: A = b18ebd2, B = 58f9d63 (A/B order flipped every round). The driver of these rows is the
+token-array `--mode flex` of the table above; in steps 0-5 and for BASE the mode name `flex` meant the call matcher with the
+`if` chain, the shape `flex-call` names since step 6.
 
-## What the JIT IR says (LLVM 22, `--jit-dump`; the dumps are kept locally)
+## What the JIT IR says (LLVM 22, `--jit-dump`)
 - the rule dispatch is already a `switch` in both shapes, so the dispatch step is an interpreter step only;
 - the matcher loop does 9 loads and 3 bounds checks per byte (`class_of`, `next`, `accept` each reload their
   header behind the check), `flex_consume` adds a load, a compare and a `col` store per byte;
@@ -34,7 +69,7 @@ Step 10: same file and method, A = b18ebd2, B = 58f9d63 (A/B order flipped every
 - the reference `lex_probe` is not lean either: an indirect `is_alpha` call per identifier byte and a bounds check
   per byte, which is why dasFlex can pass it.
 
-## Ideas parked for wave 3
+## Ideas parked
 - tagged DFA for single-pass groups (the re-match of step 10 is the carried path), trailing context
 - the typedef lookup hashes every identifier's string; a hash folded into the DFA walk over the identifier's bytes
   (or a span-keyed symbol table) would let both the keyword and the typedef lookup skip the string - the condition
