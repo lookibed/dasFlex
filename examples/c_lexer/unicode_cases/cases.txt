@@ -1,0 +1,475 @@
+# The Unicode case table of the C lexer example: each case is an input file of this folder and the
+# token stream clang 18 lexes from it (clang -fsyntax-only -Xclang -dump-tokens, the default gnu17),
+# with the verdicts of clang -fsyntax-only and gcc 11 -fsyntax-only (accept or reject, then the first
+# error, or the first warning of an accepted file, as line:col). tests/c_lexer_unicode_tests.das
+# lexes every input and compares; no compiler runs at test time.
+#
+#   case    the input is <name>.c
+#   lexer   clang      - the lexer produces the clang stream: kinds mapped to the lexer's, each
+#                        token's byte range equal
+#           error N    - the clang tokens that start before byte N, each cut at N, then the lexer
+#                        fails with its cursor at byte N (an `unknown` token in clang's stream, or
+#                        a character clang reports inside an identifier it keeps whole)
+#           none ...   - out of scope for a lexer of preprocessed text, recorded only
+#   tok     clang's kind, byte offset, byte length, spelling (bytes outside UTF-8 as \xNN)
+
+case	ident_latin
+about	letters with diacritics in an identifier (C11 Annex D.1)
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	7	größe
+tok	equal	12	1	=
+tok	numeric_constant	14	1	1
+tok	semi	15	1	;
+
+case	ident_cjk
+about	CJK ideographs in an identifier
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	6	变量
+tok	equal	11	1	=
+tok	numeric_constant	13	1	2
+tok	semi	14	1	;
+
+case	ident_emoji
+about	an emoji identifier: inside Annex D.1 (U+10000..U+1FFFD), so C11/C17 take it; C23 (XID_Start) does not - clang -std=c23 reports "unexpected character <U+1F600>"
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	4	😀
+tok	equal	9	1	=
+tok	numeric_constant	11	1	3
+tok	semi	12	1	;
+
+case	ident_digit_start
+about	an Arabic-Indic digit (U+0660) starting an identifier: Annex D.1 lists it and D.2 does not exclude it
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	3	٠x
+tok	semi	7	1	;
+
+case	ident_combining
+about	a combining mark (U+0301) after the first character
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	2	é
+tok	equal	7	1	=
+tok	numeric_constant	9	1	1
+tok	semi	10	1	;
+
+case	ident_combining_start
+about	a combining mark starting an identifier: Annex D.2 bans it initially
+clang	reject - 1:5 error: character <U+0301> not allowed at the start of an identifier
+gcc	reject - 1:5 error: extended character ́ is not valid at the start of an identifier
+lexer	error 4
+tok	int	0	3	int
+tok	unknown	4	2	́
+tok	identifier	6	1	e
+tok	equal	8	1	=
+tok	numeric_constant	10	1	1
+tok	semi	11	1	;
+
+case	ident_not_allowed
+about	U+00D7 (multiplication sign) is outside Annex D.1: clang keeps one identifier token and reports the character, the lexer stops the identifier before it
+clang	reject - 1:6 error: character <U+00D7> not allowed in an identifier
+gcc	reject - 1:6 error: stray ‘\303’ in program
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	4	a×b
+tok	semi	8	1	;
+
+case	ident_nbsp
+about	U+00A0 between tokens: clang -fsyntax-only treats it as whitespace (-Wunicode-whitespace), its token dump shows an unknown token, gcc rejects it as a stray byte; the lexer reports it
+clang	accept - 1:4 warning: treating Unicode character as whitespace [-Wunicode-whitespace]
+gcc	reject - 1:4 error: stray ‘\302’ in program
+lexer	error 3
+tok	int	0	3	int
+tok	unknown	3	2	 
+tok	identifier	5	1	x
+tok	semi	6	1	;
+
+case	ident_dollar
+about	$ in identifiers, a GNU extension both compilers take by default
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	2	$x
+tok	equal	7	1	=
+tok	numeric_constant	9	1	1
+tok	comma	10	1	,
+tok	identifier	12	3	a$b
+tok	equal	16	1	=
+tok	numeric_constant	18	1	2
+tok	semi	19	1	;
+
+case	ident_ucn
+about	universal character names in identifiers
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	9	caf\u00e9
+tok	equal	14	1	=
+tok	numeric_constant	16	1	1
+tok	semi	17	1	;
+tok	int	19	3	int
+tok	identifier	23	10	\U0001F600
+tok	equal	34	1	=
+tok	numeric_constant	36	1	2
+tok	semi	37	1	;
+tok	int	39	3	int
+tok	identifier	43	13	\u00E9t\u00e9
+tok	semi	56	1	;
+tok	int	58	3	int
+tok	identifier	62	12	\u00e9\u0301
+tok	semi	74	1	;
+
+case	ident_ucn_basic
+about	a UCN naming a basic character (\u0041 is A): C11 6.4.3 forbids it
+clang	reject - 1:5 error: character 'A' cannot be specified by a universal character name
+gcc	reject - 1:5 error: \u0041 is not a valid universal character
+lexer	error 4
+tok	int	0	3	int
+tok	unknown	4	6	\u0041
+tok	equal	11	1	=
+tok	numeric_constant	13	1	1
+tok	semi	14	1	;
+
+case	ident_ucn_dollar
+about	a UCN naming $ inside an identifier: forbidden like any basic character
+clang	reject - 1:6 error: character '$' cannot be specified by a universal character name
+gcc	accept
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	1	a
+tok	unknown	5	6	\u0024
+tok	identifier	11	1	b
+tok	semi	12	1	;
+
+case	ident_ucn_not_allowed
+about	a UCN naming U+00D7 inside an identifier: clang keeps one token and reports it, the lexer stops the identifier before it
+clang	reject - 1:6 error: character <U+00D7> not allowed in an identifier
+gcc	reject - 1:5 error: universal character \u00D7 is not valid in an identifier
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	8	x\u00D7y
+tok	semi	12	1	;
+
+case	ident_ucn_start
+about	a UCN naming a combining mark at the start of an identifier
+clang	reject - 1:5 error: expected identifier or '('
+gcc	reject - 1:5 error: universal character \u0301 is not valid at the start of an identifier
+lexer	error 4
+tok	int	0	3	int
+tok	unknown	4	6	\u0301
+tok	identifier	10	1	w
+tok	semi	11	1	;
+
+case	ident_ucn_surrogate
+about	a UCN naming a surrogate inside an identifier
+clang	reject - 1:6 error: invalid universal character
+gcc	reject - 1:5 error: \uD800 is not a valid universal character
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	1	q
+tok	unknown	5	6	\uD800
+tok	semi	11	1	;
+
+case	literal_ucn
+about	UCNs in string and character literals
+clang	accept
+gcc	accept
+lexer	clang
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	s
+tok	equal	14	1	=
+tok	string_literal	16	22	"caf\u00e9 \U0001F600"
+tok	semi	38	1	;
+tok	int	40	3	int
+tok	identifier	44	1	c
+tok	equal	46	1	=
+tok	utf16_char_constant	48	9	u'\u00e9'
+tok	semi	57	1	;
+tok	long	59	4	long
+tok	identifier	64	1	d
+tok	equal	66	1	=
+tok	utf32_char_constant	68	13	U'\U0001F600'
+tok	semi	81	1	;
+tok	int	83	3	int
+tok	identifier	87	1	e
+tok	equal	89	1	=
+tok	wide_char_constant	91	9	L'\u00e9'
+tok	semi	100	1	;
+
+case	literal_ucn_values
+about	UCNs a literal may not name (a basic character, a surrogate, past U+10FFFF): both compilers reject the values, and clang lexes each literal as one token
+clang	reject - 1:18 error: character 'A' cannot be specified by a universal character name
+gcc	reject - 1:25 error: \u0041 is not a valid universal character
+lexer	clang
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	a
+tok	equal	14	1	=
+tok	string_literal	16	8	"\u0041"
+tok	comma	24	1	,
+tok	star	26	1	*
+tok	identifier	27	1	b
+tok	equal	29	1	=
+tok	string_literal	31	8	"\uD800"
+tok	comma	39	1	,
+tok	star	41	1	*
+tok	identifier	42	1	c
+tok	equal	44	1	=
+tok	string_literal	46	12	"\U00110000"
+tok	semi	58	1	;
+
+case	literal_ucn_incomplete
+about	an incomplete UCN in a string: clang lexes a string token and reports the escape; the lexer, whose escape rule names the escapes C allows, refuses the literal
+clang	reject - 1:18 error: incomplete universal character name
+gcc	reject - 1:23 error: incomplete universal character name \u00
+lexer	none - escape validity belongs to the literal's conversion; clang lexes any backslash pair inside a literal, the example's rules only the escapes C11 6.4.4.4 lists
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	d
+tok	equal	14	1	=
+tok	string_literal	16	6	"\u00"
+tok	semi	22	1	;
+
+case	literal_prefixed
+about	u8, u, U and L string literals with UTF-8 contents, u, U and L character constants
+clang	accept
+gcc	accept
+lexer	clang
+tok	void	0	4	void
+tok	star	5	1	*
+tok	identifier	6	1	a
+tok	equal	8	1	=
+tok	utf8_string_literal	10	11	u8"größe"
+tok	comma	21	1	,
+tok	star	23	1	*
+tok	identifier	24	1	b
+tok	equal	26	1	=
+tok	utf16_string_literal	28	5	u"é"
+tok	comma	33	1	,
+tok	star	35	1	*
+tok	identifier	36	1	c
+tok	equal	38	1	=
+tok	utf32_string_literal	40	7	U"😀"
+tok	comma	47	1	,
+tok	star	49	1	*
+tok	identifier	50	1	d
+tok	equal	52	1	=
+tok	wide_string_literal	54	4	L"x"
+tok	semi	58	1	;
+tok	int	60	3	int
+tok	identifier	64	1	e
+tok	equal	66	1	=
+tok	utf16_char_constant	68	4	u'x'
+tok	comma	72	1	,
+tok	identifier	74	1	f
+tok	equal	76	1	=
+tok	utf32_char_constant	78	4	U'x'
+tok	comma	82	1	,
+tok	identifier	84	1	g
+tok	equal	86	1	=
+tok	wide_char_constant	88	4	L'x'
+tok	semi	92	1	;
+
+case	literal_u8_char
+about	u8'x' is C23: under the default gnu17 both compilers lex the identifier u8 and a character constant
+clang	reject - 1:9 error: use of undeclared identifier 'u8'
+gcc	reject - 1:9 error: ‘u8’ undeclared here (not in a function)
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	1	e
+tok	equal	6	1	=
+tok	identifier	8	2	u8
+tok	char_constant	10	3	'x'
+tok	semi	13	1	;
+
+case	literal_utf8_char
+about	a two-byte UTF-8 character in a plain character constant: clang reports the value too large, gcc takes a multi-character constant; both lex one token
+clang	reject - 1:9 error: character too large for enclosing character literal type
+gcc	accept - 1:9 warning: multi-character character constant [-Wmultichar]
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	1	c
+tok	equal	6	1	=
+tok	char_constant	8	4	'é'
+tok	semi	12	1	;
+
+case	bom_start
+about	a UTF-8 byte order mark at offset 0 is skipped
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	3	3	int
+tok	identifier	7	1	x
+tok	semi	8	1	;
+
+case	bom_middle
+about	U+FEFF after offset 0 is an identifier character (Annex D.1 FE47..FFFD) for clang; gcc rejects it
+clang	reject - 1:7 error: unknown type name '﻿'
+gcc	reject - 1:1 error: expected ‘=’, ‘,’, ‘;’, ‘asm’ or ‘__attribute__’ at end of input
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	1	x
+tok	semi	5	1	;
+tok	identifier	6	3	﻿
+
+case	comment_utf8
+about	UTF-8 inside comments
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	22	3	int
+tok	identifier	26	1	x
+tok	semi	27	1	;
+
+case	bad_utf8_ident
+about	a byte that starts no UTF-8 character (0xFF) inside an identifier
+clang	reject - 1:7 error: source file is not valid UTF-8
+gcc	reject - 1:7 error: stray ‘\377’ in program
+lexer	error 6
+tok	int	0	3	int
+tok	identifier	4	2	ab
+tok	unknown	6	1	\xFF
+tok	identifier	7	2	cd
+tok	semi	9	1	;
+
+case	bad_utf8_string
+about	a byte that starts no UTF-8 character inside a string literal: clang warns (-Winvalid-source-encoding), gcc is silent, both keep the literal
+clang	accept - 1:19 warning: illegal character encoding in string literal [-Winvalid-source-encoding]
+gcc	accept
+lexer	clang
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	s
+tok	equal	14	1	=
+tok	string_literal	16	5	"a\xFFb"
+tok	semi	21	1	;
+
+case	bad_utf8_stray
+about	a stray continuation byte between tokens
+clang	reject - 1:8 error: source file is not valid UTF-8
+gcc	reject - 1:8 error: stray ‘\200’ in program
+lexer	error 7
+tok	int	0	3	int
+tok	identifier	4	1	x
+tok	semi	5	1	;
+tok	unknown	7	1	\x80
+
+case	bad_utf8_truncated
+about	a lead byte cut off by the end of the file
+clang	reject - 1:6 error: source file is not valid UTF-8
+gcc	reject - 1:6 error: stray ‘\303’ in program
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	1	a
+tok	unknown	5	1	\xC3
+
+case	overlong_ident
+about	an overlong two-byte encoding of '/' in an identifier
+clang	reject - 1:6 error: source file is not valid UTF-8
+gcc	reject - 1:6 error: stray ‘\300’ in program
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	1	a
+tok	unknown	5	1	\xC0
+tok	unknown	6	1	\xAF
+tok	semi	7	1	;
+
+case	overlong3_ident
+about	an overlong three-byte encoding of '/' in an identifier
+clang	reject - 1:6 error: source file is not valid UTF-8
+gcc	reject - 1:6 error: stray ‘\340’ in program
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	1	a
+tok	unknown	5	1	\xE0
+tok	unknown	6	1	\x80
+tok	unknown	7	1	\xAF
+tok	semi	8	1	;
+
+case	surrogate_ident
+about	the UTF-8 encoding of a surrogate (U+D800) in an identifier
+clang	reject - 1:6 error: source file is not valid UTF-8
+gcc	reject - 1:6 error: stray ‘\355’ in program
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	1	a
+tok	unknown	5	1	\xED
+tok	unknown	6	1	\xA0
+tok	unknown	7	1	\x80
+tok	semi	8	1	;
+
+case	overlong_string
+about	overlong encodings inside a string literal: kept, as any byte
+clang	accept - 1:18 warning: illegal character encoding in string literal [-Winvalid-source-encoding]
+gcc	accept
+lexer	clang
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	s
+tok	equal	14	1	=
+tok	string_literal	16	7	"\xC0\xAF\xE0\x80\xAF"
+tok	semi	23	1	;
+
+case	surrogate_string
+about	an encoded surrogate inside a string literal: kept, as any byte
+clang	accept - 1:18 warning: illegal character encoding in string literal [-Winvalid-source-encoding]
+gcc	accept
+lexer	clang
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	s
+tok	equal	14	1	=
+tok	string_literal	16	5	"\xED\xA0\x80"
+tok	semi	21	1	;
+
+case	pp_paste
+about	a UCN pasted together by ## (only the first line forms one)
+clang	reject - 3:9 error: expected identifier or '('
+gcc	reject - 3:9 error: stray ‘\’ in program
+lexer	none - preprocessor: the tokens come out of a macro expansion, which a lexer over preprocessed text never sees
+tok	int	25	3	int
+tok	identifier	29	9	caf\u00e9  (macro expansion)
+tok	equal	46	1	=
+tok	numeric_constant	48	1	1
+tok	semi	49	1	;
+tok	int	51	3	int
+tok	unknown	55	1	\  (macro expansion)
+tok	identifier	55	5	u00e9  (macro expansion)
+tok	equal	69	1	=
+tok	numeric_constant	71	1	2
+tok	semi	72	1	;
+
+case	pp_stringize
+about	a UCN turned into a string by #
+clang	accept
+gcc	accept
+lexer	none - preprocessor: the string literal comes out of a macro expansion, which a lexer over preprocessed text never sees
+tok	const	18	5	const
+tok	char	24	4	char
+tok	star	29	1	*
+tok	identifier	30	1	s
+tok	equal	32	1	=
+tok	string_literal	34	8	"\u00e9"  (macro expansion)
+tok	semi	45	1	;
