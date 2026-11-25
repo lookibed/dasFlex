@@ -6,11 +6,12 @@ module flex_regex shared public
 
 require daslib/regex
 require daslib/strings_boost
+require flex/flex
 
 // Regular expressions to a byte NFA: `daslib/regex` parses the text (its tree is the one input here,
 // never re-parsed), Thompson's construction turns each node into a fragment over byte ranges with
 // epsilon edges. `.` is one UTF-8 code point other than a newline, spelled as the byte sequences of
-// UTF-8. The forms a DFA cannot carry - anchors, word boundaries, lookahead, lazy quantifiers - are
+// UTF-8 (`UTF8_LEADS` in flex/flex.das). The forms a DFA cannot carry - anchors, word boundaries, lookahead, lazy quantifiers - are
 // refused with the text that names them.
 
 //! One byte-range edge: every byte in `lo..hi` moves to `to`.
@@ -85,27 +86,25 @@ def frag_set(var n : Nfa; cset : CharSet) : Frag {
     return Frag(first = a, last = b)
 }
 
-//! `.`: one UTF-8 code point that is not a newline - the byte shapes of UTF-8, continuation bytes 128..191
+//! `.`: one UTF-8 code point that is not a newline - a path per lead-byte shape of `UTF8_LEADS`
 def frag_any_codepoint(var n : Nfa) : Frag {
     let a = new_state(n)
     let b = new_state(n)
-    add_edge(n, a, 0, 9, b)
-    add_edge(n, a, 11, 127, b)
-    let c2 = new_state(n)
-    add_edge(n, a, 194, 223, c2)
-    add_edge(n, c2, 128, 191, b)
-    let c3a = new_state(n)
-    let c3b = new_state(n)
-    add_edge(n, a, 224, 239, c3a)
-    add_edge(n, c3a, 128, 191, c3b)
-    add_edge(n, c3b, 128, 191, b)
-    let c4a = new_state(n)
-    let c4b = new_state(n)
-    let c4c = new_state(n)
-    add_edge(n, a, 240, 244, c4a)
-    add_edge(n, c4a, 128, 191, c4b)
-    add_edge(n, c4b, 128, 191, c4c)
-    add_edge(n, c4c, 128, 191, b)
+    for (lead in UTF8_LEADS) {
+        if (lead.len == 1) {
+            add_edge(n, a, lead.lo, '\n' - 1, b)
+            add_edge(n, a, '\n' + 1, lead.hi, b)
+            continue
+        }
+        var at = new_state(n)
+        add_edge(n, a, lead.lo, lead.hi, at)
+        for (_k in range(lead.len - 2)) {
+            let next = new_state(n)
+            add_edge(n, at, 128, 191, next)
+            at = next
+        }
+        add_edge(n, at, 128, 191, b)
+    }
     return Frag(first = a, last = b)
 }
 

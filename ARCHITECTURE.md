@@ -9,15 +9,16 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
 ## File charters
 
 - `flex/flex_regex.das` - the regex tree of `daslib/regex` to a byte NFA (`Nfa`, `FlexRule`,
-  `build_nfa`). Owns the UTF-8 shapes of `.` and the list of regex forms a DFA cannot carry. Never
-  parses regex text itself.
+  `build_nfa`). Owns the NFA of `.`, built from the lead bytes `flex/flex.das` holds, and the list of
+  regex forms a DFA cannot carry. Never parses regex text itself.
 - `flex/flex_dfa.das` - the NFA to tables (`FlexTables`, `build_tables`, `flex_tables`): byte
   equivalence classes, subset construction, the rule an accepting state carries. Knows nothing of
   source code or macros.
 - `flex/flex.das` - the run-time scanner state (`FlexLexer`, `FlexToken`), the actions a rule body
   calls (`emit`, `begin`, `text`, `text_is`), the capture-group re-match behind `group` and
-  `group_span` (`flex_group`, `flex_group_span`, `flex_group_regex`), the error text (`flex_error_text`), and the
-  matcher and position tracking of the `matcher="call"` shape (`flex_match_table`,
+  `group_span` (`flex_group`, `flex_group_span`, `flex_group_regex`), the error text
+  (`flex_error_text`), the UTF-8 lead bytes both the error text and `.` read (`UTF8_LEADS`), and
+  the matcher and position tracking of the `matcher="call"` shape (`flex_match_table`,
   `flex_consume`). No regex, no AST.
 - `flex/flex_macro.das` - the `[flex]` function annotation and `[flex_text]`, the one the reader's
   output carries: each collects its rules into a `FlexSpec`, and `flex_generate` builds the tables

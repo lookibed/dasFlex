@@ -133,12 +133,29 @@ def text_is(lx : FlexLexer; s : string) : bool {
     }
 }
 
+//! a lead byte in `lo..hi` starts a UTF-8 character of `len` bytes, each byte after the first a
+//! continuation byte `0x80..0xBF`
+struct Utf8Lead {
+    lo : int
+    hi : int
+    len : int
+}
+
+//! the lead bytes of UTF-8 by character length, the overlong `0xC0`, `0xC1` and everything past
+//! U+10FFFF (`0xF5..0xFF`) left out; `.` and the error text both read it
+let UTF8_LEADS = fixed_array(Utf8Lead(lo = 0, hi = 127, len = 1),
+                             Utf8Lead(lo = 194, hi = 223, len = 2),
+                             Utf8Lead(lo = 224, hi = 239, len = 3),
+                             Utf8Lead(lo = 240, hi = 244, len = 4))
+
 //! the byte length of the UTF-8 character at `pos`: its lead byte and that many continuation bytes
 //! (`0x80..0xBF`) in the input, 0 when the bytes there are not one
 def private utf8_char_len(lx : FlexLexer; pos : int) : int {
     let b = int(unsafe(lx.data[pos]))
-    let n = b < 0x80 ? 1 : (b < 0xC2 ? 0 : (b < 0xE0 ? 2 : (b < 0xF0 ? 3 : (b < 0xF5 ? 4 : 0))))
-    return 0 if (n == 0 || pos + n > lx.len)
+    let lead = find_index_if(UTF8_LEADS) $(l) => b >= l.lo && b <= l.hi
+    return 0 if (lead < 0)
+    let n = UTF8_LEADS[lead].len
+    return 0 if (pos + n > lx.len)
     for (k in range(1, n)) {
         return 0 if ((int(unsafe(lx.data[pos + k])) & 0xC0) != 0x80)
     }
