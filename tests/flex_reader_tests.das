@@ -221,12 +221,10 @@ def test_errors(t : T?) {
         t |> success(find(issues, "does not parse") >= 0, issues)
         t |> success(find(issues, "e4.das:9:") >= 0, issues)
     }
-    t |> run("an unknown definition and a malformed line in the reader itself") @(t : T?) {
-        var issues = compile_issues("e5.das", reader_module("", "\"a\"  \{ emit(A) \}\n\{X\}+\n"))
+    t |> run("an unknown definition") @(t : T?) {
+        let issues = compile_issues("e5.das", reader_module("", "\"a\"  \{ emit(A) \}\n\{X\}+\n"))
         t |> success(find(issues, "\{X\}: no such definition") >= 0, issues)
         t |> success(find(issues, "e5.das:9:") >= 0, issues)
-        issues = compile_issues("e6.das", reader_module("%y C\n", "\"a\"  \{ emit(A) \}\n"))
-        t |> success(find(issues, "e6.das:7:") >= 0, issues)
     }
     t |> run("trailing context: an unquoted, unescaped slash outside a set") @(t : T?) {
         let issues = compile_issues("e7.das",
@@ -234,6 +232,67 @@ def test_errors(t : T?) {
         t |> success(find(issues, "trailing context (r/s) is not carried by dasFlex") >= 0,
                      issues)
         t |> success(find(issues, "e7.das:9:") >= 0, issues)
+    }
+}
+
+//! a module with a `[flex]` function whose body is `body`, starting at line 5
+def private flex_module(body : string) : string =>
+    "options gen2\nrequire flex/flex_macro\n[flex]\ndef bad(var lx : FlexLexer) : bool \{\n{body}\}\n"
+
+[test(description = "every refusal of the %flex~ reader names its reason at the line it met it on")]
+def test_reader_refusals(t : T?) {
+    let cases <- [
+        (reader_module("", "\"ab  \{ emit(A) \}\n"),
+         "a quoted literal ends at the end of the line", 8),
+        (reader_module("", "\"a\\\n"), "a quoted literal ends at the end of the line", 8),
+        (reader_module("", "[ab  \{ \}\n"), "a [set] ends at the end of the line", 8),
+        (reader_module("", "ab\\\n"), "the pattern ends with a backslash", 8),
+        (reader_module("", "a  \{ emit(A)\n"), "the action ends at the end of the rules", 9),
+        (reader_module("", "<A b  \{ \}\n"), "<CONDITION> expected", 8),
+        (reader_module("", "<A> \{ \}\n"), "a rule starts with a pattern", 8),
+        (reader_module("", "a  \{ emit(A) \} x\n"),
+         "nothing but a comment follows an action on its line", 8),
+        (reader_module("", "a  emit(A) // c\n"),
+         "an action with a comment on its line is written in braces", 8),
+        ("options gen2\nrequire flex/flex_macro\n%flex~ bad bad\n%rules\na\n%%\n",
+         "the header is `%flex~ name : TokenEnum`", 3),
+        (reader_module("%option speed=fast\n", "a\n"),
+         "%option takes mode=, dispatch= and matcher=, not speed=fast", 7),
+        (reader_module("D  [0-9] x\n", "a\n"), "a definition is `NAME regex`, one pattern", 7),
+        (reader_module("%y C\n", "a\n"),
+         "a definition is `%x NAMES`, `%s NAMES`, `%option key=value` or `NAME regex`", 7),
+        ("options gen2\nrequire flex/flex_macro\n%flex~ bad\nD  [0-9]\n%%\n",
+         "the rules section starts at a line `%rules`", 5)]
+    for (i, c in count(), cases) {
+        let issues = compile_issues("r{i}.das", c._0)
+        t |> success(find(issues, "%flex~: {c._1}") >= 0, issues)
+        t |> success(find(issues, "r{i}.das:{c._2}:") >= 0, issues)
+    }
+}
+
+[test(description = "every refusal of a [flex] body names its reason at the statement it met, or at the annotation for the whole function")]
+def test_flex_body_refusals(t : T?) {
+    let cases <- [
+        (flex_module("    rule(1) \{\n    \}\n"), "rule(\"regex\") \{ ... \} expected", 5),
+        (flex_module("    rule(\"a\") $(x : int) \{\n    \}\n"),
+         "a rule block takes no arguments: the lexer is the function's parameter", 5),
+        (flex_module("    condition(\"C\") \{\n    \}\n"),
+         "condition(\"NAME\", exclusive|inclusive) \{ rules \} expected", 5),
+        (flex_module("    condition(\"C\", both) \{\n    \}\n"),
+         "condition kind is exclusive or inclusive, not both", 5),
+        (flex_module("    let x = 1\n"),
+         "only rule(...) and condition(...) calls belong in a [flex] body", 5),
+        (flex_module("    condition(\"C\", exclusive) \{\n        let x = 1\n    \}\n"),
+         "only rule(...) calls belong in a condition block", 6),
+        (flex_module("    print(\"x\")\n"),
+         "only rule(...) and condition(...) calls belong in a [flex] body, not print", 5),
+        (flex_module(""), "[flex] body has no rules", 3),
+        (replace(flex_module("    rule(\"a\") \{\n    \}\n"), "FlexLexer)", "FlexLexer; n : int)"),
+         "[flex] takes one argument: var lx : FlexLexer", 3)]
+    for (i, c in count(), cases) {
+        let issues = compile_issues("f{i}.das", c._0)
+        t |> success(find(issues, c._1) >= 0, issues)
+        t |> success(find(issues, "f{i}.das:{c._2}:") >= 0, issues)
     }
 }
 
