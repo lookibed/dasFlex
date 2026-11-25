@@ -69,16 +69,46 @@ def private eps_closure(n : Nfa; var states : array<int>) {
 
 def private set_key(states : array<int>) : string => join(states, ",")
 
+//! the index of the DFA state for the NFA state set `st`, added to `sets` when it is new
+def private intern_set(var sets : array<array<int>>; var index : table<string; int>;
+                       var st : array<int>) : int {
+    let key = set_key(st)
+    var at = index?[key] ?? -1
+    if (at < 0) {
+        at = length(sets)
+        index[key] = at
+        sets |> emplace(st)
+    }
+    return at
+}
+
+//! the lowest and the highest byte of every byte class
+struct ClassBounds {
+    lo : array<int>
+    hi : array<int>
+}
+
+//! a byte class is a run of consecutive bytes (`byte_classes` numbers them in byte order), so its
+//! bounds are where `class_of` changes
+def class_bounds(t : FlexTables) : ClassBounds {
+    var cb : ClassBounds
+    cb.lo |> resize(t.nclasses)
+    cb.hi |> resize(t.nclasses)
+    for (b, c in count(), t.class_of) {
+        if (b == 0 || t.class_of[b - 1] != c) {
+            cb.lo[c] = b
+        }
+        cb.hi[c] = b
+    }
+    return <- cb
+}
+
 //! Subset construction. The result's `err` and `err_rule` repeat the NFA's.
 def build_tables(n : Nfa) : FlexTables {
     var t = FlexTables(err = n.err, err_rule = n.err_rule)
     return <- t if (!empty(n.err))
     t.nclasses = byte_classes(n, t.class_of)
-    var class_rep_byte : array<int>
-    class_rep_byte |> resize(t.nclasses)
-    for (b in range(256)) {
-        class_rep_byte[t.class_of[255 - b]] = 255 - b
-    }
+    let bounds <- class_bounds(t)
     var sets : array<array<int>>
     var index : table<string; int>
     t.start |> resize(length(n.starts))
@@ -86,12 +116,7 @@ def build_tables(n : Nfa) : FlexTables {
         var st : array<int>
         st |> push(s0)
         eps_closure(n, st)
-        let key = set_key(st)
-        if (!(index |> key_exists(key))) {
-            index[key] = length(sets)
-            sets |> emplace(st)
-        }
-        t.start[c] = index[key]
+        t.start[c] = intern_set(sets, index, st)
     }
     var si = 0
     while (si < length(sets)) {
@@ -103,7 +128,7 @@ def build_tables(n : Nfa) : FlexTables {
         }
         t.accept |> push(acc)
         for (cls in range(t.nclasses)) {
-            let b = class_rep_byte[cls]
+            let b = bounds.lo[cls]
             var inscope moved : array<int>
             var inscope seen : table<int>
             for (s in sets[si]) {
@@ -119,12 +144,7 @@ def build_tables(n : Nfa) : FlexTables {
                 continue
             }
             eps_closure(n, moved)
-            let key = set_key(moved)
-            if (!(index |> key_exists(key))) {
-                index[key] = length(sets)
-                sets |> emplace(moved)
-            }
-            t.next |> push(index[key])
+            t.next |> push(intern_set(sets, index, moved))
         }
         si++
     }

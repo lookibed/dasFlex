@@ -434,15 +434,14 @@ def private after_newline_states(t : FlexTables) : array<bool> {
 }
 
 //! the moves out of state `s`, one byte-range test per class; the `\n` move also counts the newline
-def private make_goto_moves(t : FlexTables; s : int;
-                            class_lo_byte, class_hi_byte : array<int>) : array<ExpressionPtr> {
+def private make_goto_moves(t : FlexTables; s : int; bounds : ClassBounds) : array<ExpressionPtr> {
     var moves : array<ExpressionPtr>
     let nl_class = t.class_of[10]
     for (c in range(t.nclasses)) {
         let nx = t.next[s * t.nclasses + c]
         continue if (nx < 0)
-        let lo = class_lo_byte[c]
-        let hi = class_hi_byte[c]
+        let lo = bounds.lo[c]
+        let hi = bounds.hi[c]
         if (c == nl_class) {
             moves |> push <| qmacro_block() {
                 if (flex`b == 10) {
@@ -475,23 +474,13 @@ def private make_goto_matcher(t : FlexTables; lx : string; cond_start : string;
     var out : array<ExpressionPtr>
     out |> reserve(t.nstates * 3 + 4)
     let done = t.nstates
-    var class_lo_byte, class_hi_byte : array<int>
-    class_lo_byte |> resize(t.nclasses)
-    class_hi_byte |> resize(t.nclasses)
-    for (c in range(t.nclasses)) {
-        class_lo_byte[c] = 256
-        class_hi_byte[c] = -1
-    }
-    for (b, c in count(), t.class_of) {
-        class_lo_byte[c] = min(class_lo_byte[c], b)
-        class_hi_byte[c] = max(class_hi_byte[c], b)
-    }
+    let bounds <- class_bounds(t)
     let after_nl <- after_newline_states(t)
     out |> push <| qmacro_block() {
         goto $i(cond_start)
     }
     for (s in range(t.nstates)) {
-        var moves <- make_goto_moves(t, s, class_lo_byte, class_hi_byte)
+        var moves <- make_goto_moves(t, s, bounds)
         let acc = t.accept[s]
         var lab_s : ExpressionPtr = new ExprLabel(at = t_at, labelName = s)
         out |> emplace(lab_s)
