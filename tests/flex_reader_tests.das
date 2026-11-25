@@ -49,6 +49,13 @@ WORD    [a-z]({D}|[a-z])*
 " "+
 %%
 
+%flex~ r_alt : RTok
+XY      x|y
+%rules
+{XY}z               { emit(WORD) }
+" "+
+%%
+
 %flex~ r_untyped
 %rules
 [0-9]+              { lx |> emit(7) }
@@ -93,7 +100,7 @@ def stream(src, which : string) : array<string> {
     var out : array<string>
     while (which == "kinds" ? r_kinds(lx) : which == "defs" ? r_defs(lx)
            : which == "groups" ? r_groups(lx) : which == "braces" ? r_braces(lx)
-           : r_untyped(lx)) {
+           : which == "alt" ? r_alt(lx) : r_untyped(lx)) {
         out |> push("{lx.tok.kind}:{text(lx)}")
     }
     out |> push(lx.err)
@@ -142,12 +149,14 @@ def test_start_conditions(t : T?) {
     }
 }
 
-[test(description = "a quoted pattern is literal text, an unquoted one a regex, a quoted, escaped or bracketed slash a literal; definitions expand in parentheses")]
+[test(description = "a quoted pattern is literal text, an unquoted one a regex, a quoted, escaped or bracketed slash a literal; definitions expand in parentheses, so `\{XY\}z` with `XY x|y` takes no lone x")]
 def test_quoted_and_regex(t : T?) {
     t |> equal(stream("/ab // y", "untyped"), ["8:/ab", "9://", ""])
     t |> equal(stream("a+ aa", "kinds"), ["{int(RTok.LIT)}:a+", "{int(RTok.WORD)}:aa", ""])
     t |> equal(stream("a1 123 4", "defs"),
                ["{int(RTok.WORD)}:a1", "{int(RTok.NUM)}:12", "t.txt:1:6: unexpected '3'"])
+    t |> equal(stream("xz yz x", "alt"),
+               ["{int(RTok.WORD)}:xz", "{int(RTok.WORD)}:yz", "t.txt:1:7: unexpected 'x'"])
 }
 
 [test(description = "emit, begin, an empty action, a brace-less and a multi-line action all run as daslang code")]
