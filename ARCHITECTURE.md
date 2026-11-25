@@ -9,8 +9,9 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
 ## File charters
 
 - `flex/flex_regex.das` - the regex tree of `daslib/regex` to a byte NFA (`Nfa`, `FlexRule`,
-  `build_nfa`). Owns the NFA of `.`, built from the lead bytes `flex/flex.das` holds, and the list of
-  regex forms a DFA cannot carry. Never parses regex text itself.
+  `build_nfa`). Owns the NFA of `.`, built from the lead bytes `flex/flex.das` holds, the rewrite of
+  code-point escapes into UTF-8 byte sequences (`flex_codepoints`), and the list of regex forms a DFA
+  cannot carry. Reads no regex syntax beyond those escapes.
 - `flex/flex_dfa.das` - the NFA to tables (`FlexTables`, `build_tables`, `flex_tables`): byte
   equivalence classes, subset construction, the rule an accepting state carries. Knows nothing of
   source code or macros.
@@ -28,7 +29,8 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
   `[flex_text]` function (`flex_reader_source`). Text in, text out; no regex, no tables.
 - `examples/c_lexer/` - the C11 lexer on dasFlex (`c_lexer.das`), the same rules under the other
   scanner shapes (`c_lexer_goto.das`, `c_lexer_variants.das`, written by `gen_variants.das`), the
-  same rules in `%flex~` form (`c_lexer_reader.das`), a demo and the comparison and timing driver.
+  same rules in `%flex~` form (`c_lexer_reader.das`), a demo, the comparison and timing driver, and
+  the Unicode case table (`unicode_cases/`: inputs and the token streams clang lexes from them).
 - `tests/` - the package's dastest tests.
 - `tutorials/` - the JSON lexer as `[flex]` rules (01) and as `%flex~` text (02), a config lexer
   reading capture groups (03).
@@ -58,11 +60,28 @@ every front end and scanner shape then reads the smaller tables.
 The automaton reads UTF-8 bytes. A literal above 127 is its byte sequence, `.` is the set of byte
 shapes a UTF-8 code point other than newline can take (one byte below 128, or a lead byte followed
 by one to three continuation bytes), and a byte set `[...]` is the 256-bit set `daslib/regex`
-parses. The inner loop therefore never decodes; it maps a byte to its class and the class to the
+parses; a set holding a code-point escape is a set of code points, spelled in bytes
+(`#code-points`). The inner loop therefore never decodes; it maps a byte to its class and the class to the
 next state. Columns are byte equivalence classes - the finest partition of 0..255 every edge of the
 NFA is a union of, with byte 10 always alone in its class so a scanner counts lines by the class it
 reads - so the transition table is `nstates x nclasses` (about seventy classes for the C lexer)
 rather than `nstates x 256`.
+
+## Code points in a byte automaton {#code-points}
+
+`\uHHHH` and `\UHHHHHHHH` in a pattern name a code point. `daslib/regex` parses bytes only, so
+`flex_codepoints` rewrites the escapes before it reads the text: one outside a set becomes the UTF-8
+bytes of its code point as one group, so a quantifier repeats the whole character; a set holding
+one is a set of code points - characters below 128, their escapes, code-point escapes, ranges, `^` -
+and becomes a byte set for its ASCII members plus, per UTF-8 shape, a sequence of byte ranges. A
+range splits at the encoded-length boundaries and wherever the continuation bytes below the first
+differing byte do not span `0x80..0xBF`, the way RE2 compiles a class, so the sequences are exact:
+no overlong form, no surrogate, nothing past U+10FFFF - malformed input `.` would let through stays
+out. A set without an escape stays a set of bytes; in a code-point set a byte past 127 and the
+class escapes `\w`, `\s`, `\d` are refused with their offset, since neither names code points.
+`build_nfa` and the group regex of a rule both read the rewritten text, so the automaton and the
+re-match agree and groups count the parentheses the rule writes; an offset a refusal names in a
+pattern holding escapes is one into the rewritten text.
 
 ## Longest match with fall-back {#longest-match}
 
@@ -190,6 +209,24 @@ C parser puts `typedef` names there and the identifier rule reads it to decide b
 `IDENTIFIER` and `TYPEDEF_NAME`. It is a field of the lexer, not a global, so two lexers never share
 it by accident.
 
+## Unicode in the C lexer {#c-unicode}
+
+The example lexes as clang does under its default `gnu17`, and `examples/c_lexer/unicode_cases/`
+records what that is: the identifier rule is `[A-Za-z_$]` plus the C11 Annex D.1 ranges as
+code-point sets, Annex D.2 left out of the first character, so an identifier of allowed
+characters is one path through the automaton and its action only looks the word up. A second rule
+takes `[A-Za-z_$]`, any UTF-8 character past ASCII and well-formed UCNs; it wins only where the
+first rule's match is shorter - the token holds a UCN, or a character Annex D excludes - and its
+action `c_ident_cut` decodes the token against `C11_IDENT_RANGES` and `C11_NOT_INITIAL`, keeping
+the identifier up to the first character C11 does not allow there or, when that is the first one,
+failing the lexer at it: where clang emits an `unknown` token, or keeps the identifier and reports
+the character. The decode runs in a rule body on those rare tokens, never in the scanner loop
+(`#bytes`). Literal bodies stay bytes - clang keeps invalid UTF-8 inside a literal and only warns -
+and their escapes take `\u` and `\U`; a UCN's value is the literal's conversion, not the lexer's.
+`c_open` skips a byte order mark at offset 0, since a rule cannot see the offset and U+FEFF later
+in a file is an identifier character. The code-point sets give the example's tables 174 states and
+143 byte classes, from 112 and 74 for the ASCII rules.
+
 ## Not carried by this version {#not-carried}
 
 - Capture groups in one pass: `group` re-matches the token (`#groups`); a tagged DFA is not built.
@@ -197,5 +234,7 @@ it by accident.
   quotes and a set, not escaped - at the rule's line; `"/"` and `\/` stay literal slashes.
 - flex's `|` action (the next rule's action), `REJECT`, `yymore` and `%array`/`%pointer` in the
   `%flex~` form; a brace-less action is one line with no comment.
-- Unicode classes such as `[а-я]`: the set syntax of `daslib/regex` is byte-wise, so a class over
-  code points above 127 is written as an alternation of literals.
+- Unicode properties (`\p{L}`) and literal UTF-8 characters inside a set: a set is bytes unless it
+  holds a code-point escape, so `[а-я]` is written `[\u0430-\u044F]` (`#code-points`).
+- In the C example, a UCN formed by `##` or `#` (the lexer reads preprocessed text), C23's
+  `XID_Start`/`XID_Continue` identifiers, and clang's reading of Unicode spaces as whitespace.

@@ -396,6 +396,7 @@ def private codepoint_set(d : array<uint8>#; at, close : int; var err : string&)
 //! `pattern` with its code-point escapes `\uHHHH` and `\UHHHHHHHH` rewritten into the UTF-8 byte
 //! sequences `daslib/regex` reads: an escape outside a set is its encoding, a set holding one is a
 //! set of code points. A pattern without them comes back as it is.
+[arch(at="../ARCHITECTURE.md#code-points")]
 def flex_codepoints(pattern : string) : CodepointText {
     var res = CodepointText(text = pattern)
     return res if (find(pattern, "\\u") < 0 && find(pattern, "\\U") < 0)

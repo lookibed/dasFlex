@@ -228,6 +228,7 @@ def c_ident_prefix(bytes : auto; start, end : int) : int {
 //! the extended identifier rule's check, for a token holding a UCN or a character outside Annex D:
 //! the token shortened to the identifier that opens it, or, when none does, the lexer failed at
 //! the token's first byte (false)
+[arch(at="../../ARCHITECTURE.md#c-unicode")]
 def c_ident_cut(var lx : FlexLexer) : bool {
     let n = c_ident_prefix(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
     return true if (n == lx.tok.len)

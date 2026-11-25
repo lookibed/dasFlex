@@ -81,3 +81,28 @@ Run the tests from a daslang checkout: `daslang -load_module <dasFlex> dastest/d
 Design and the rules a change must keep: `ARCHITECTURE.md`, `REVIEW.md`. A JSON lexer walk-through:
 `tutorials/01_json_tokens.das`, the same lexer in `%flex~` form: `tutorials/02_flex_reader.das`,
 capture groups: `tutorials/03_groups.das`.
+
+## Unicode
+
+The automaton reads UTF-8 bytes. A literal past ASCII is its bytes, `.` is one code point, and
+`\uHHHH` / `\UHHHHHHHH` name a code point - outside a set, its bytes; inside one, the set becomes
+a set of code points: `[a-z\u00E0-\u00FF]+`, `[^\u0000-\u007F]`. Such a set matches well-formed
+UTF-8 only. A set without an escape stays a set of bytes, so `[а-я]` is written
+`[\u0430-\u044F]`.
+
+The C lexer in `examples/c_lexer/` lexes Unicode as clang 18 does by default, checked against the
+table in `examples/c_lexer/unicode_cases/` (inputs, clang's token streams, gcc's verdicts):
+
+- identifiers take `$` and the characters of C11 Annex D (D.2 not first), as UTF-8 or as UCNs
+  (`caf\u00e9`, `\U0001F600`); a character Annex D excludes, a UCN naming one or a basic character,
+  and a byte that is not UTF-8 - a stray continuation, a cut sequence, an overlong form, an encoded
+  surrogate - end the identifier and stop the lexer with that byte's line and column;
+- string and character literals take `\u` / `\U` escapes and the `u8`, `u`, `U`, `L` prefixes; their
+  bytes are kept as they are, invalid UTF-8 included, as clang keeps them;
+- a byte order mark at offset 0 is skipped (`c_open`); U+FEFF later is an identifier character.
+
+Where clang differs: it reads U+00A0 and the other Unicode spaces as whitespace (with a warning) and
+keeps an identifier whole while reporting a character Annex D excludes; the lexer stops there, as gcc
+does. Under `-std=c23` clang takes `XID_Start`/`XID_Continue` instead of Annex D (no emoji). A UCN
+formed by `##` or `#` is the preprocessor's and never reaches a lexer of preprocessed text. gcc takes
+`\u0024` as `$` in an identifier, clang does not; the lexer follows clang.
