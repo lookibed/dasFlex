@@ -71,13 +71,29 @@ D       [0-9]
 " "+
 %%
 
+// what the actions of `r_braces` saw, one entry per token
+var private brace_log : array<string>
+
+%flex~ r_braces : RTok
+%rules
+a                   { brace_log |> push(to_char('}')); emit(WORD) }
+b                   { brace_log |> push("\}"); emit(NUM) }
+c                   {
+    // a } in a comment closes nothing
+    brace_log |> push("c")
+    emit(PLUS)
+}
+" "+
+%%
+
 //! the tokens of `src` as `kind:text` from one of the reader lexers, then the error text
 def stream(src, which : string) : array<string> {
     var lx : FlexLexer
     flex_open(lx, src, "t.txt")
     var out : array<string>
     while (which == "kinds" ? r_kinds(lx) : which == "defs" ? r_defs(lx)
-           : which == "groups" ? r_groups(lx) : r_untyped(lx)) {
+           : which == "groups" ? r_groups(lx) : which == "braces" ? r_braces(lx)
+           : r_untyped(lx)) {
         out |> push("{lx.tok.kind}:{text(lx)}")
     }
     out |> push(lx.err)
@@ -139,6 +155,14 @@ def test_actions(t : T?) {
     t |> equal(stream("1+2", "kinds"),
                ["{int(RTok.NUM)}:1", "{int(RTok.PLUS)}:+", "{int(RTok.NUM)}:2", ""])
     t |> equal(stream("#x\ny#", "kinds"), ["{int(RTok.BODY)}:x\ny", ""])
+}
+
+[test(description = "a closing brace inside a character literal, a string or a comment of an action does not end the action")]
+def test_action_braces(t : T?) {
+    brace_log |> clear()
+    t |> equal(stream("a b c", "braces"),
+               ["{int(RTok.WORD)}:a", "{int(RTok.NUM)}:b", "{int(RTok.PLUS)}:c", ""])
+    t |> equal(brace_log, ["\}", "\}", "c"])
 }
 
 [test(description = "an action calls group(n) and group_span(n); a definition is a non-capturing group, so n counts the rule's own groups")]
