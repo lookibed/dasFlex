@@ -707,7 +707,7 @@ def private fail_rule(msg : string; site : Expression const?; var errors : das_s
         return false
     }
     compiling_program() |> macro_error(site.at, msg)
-    errors := "line {int(site.at.line)}: {msg}"
+    errors := "see the error at line {int(site.at.line)}"
     return false
 }
 

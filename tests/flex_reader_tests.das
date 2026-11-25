@@ -204,7 +204,7 @@ def test_errors(t : T?) {
     }
 }
 
-[test(description = "group() in a rule whose regex has no capture group, or past its last group, fails the compile at the rule's line, in both forms")]
+[test(description = "group() in a rule whose regex has no capture group, or past its last group, fails the compile at the rule's line, once, in both forms")]
 def test_group_errors(t : T?) {
     t |> run("reader: a regex without groups") @(t : T?) {
         let issues = compile_issues("g1.das",
@@ -225,9 +225,9 @@ def test_group_errors(t : T?) {
             + "    rule(\"a\") \{\n        lx |> emit(1)\n    \}\n"
             + "    rule(\"[0-9]+\") \{\n        print(lx |> group(1))\n    \}\n\}\n")
         let issues = compile_issues("g3.das", src)
-        t |> success(find(issues, "group() asks for a capture group, the regex has none") >= 0,
-                     issues)
+        t |> equal(count(issues, "group() asks for a capture group, the regex has none"), 1, issues)
         t |> success(find(issues, "g3.das:8:") >= 0, issues)
+        t |> success(find(issues, "see the error at line 8") >= 0, issues)
     }
 }
 
