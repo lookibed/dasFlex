@@ -340,6 +340,7 @@ def test_symbols_table(t : T?) {
 
 require flex/flex_regex
 require flex/flex_dfa
+require daslib/utf8_utils
 
 def state_counts(rules : array<FlexRule>; ncond : int) : tuple<before : int; after : int> {
     let n <- build_nfa(rules, ncond)
@@ -438,6 +439,122 @@ def test_dot_is_one_code_point(t : T?) {
     for (word in ["\n", "ab", "é→", "\xC0\x80", "\xE2\x86", "\xF5\x80\x80\x80", "\x80"]) {
         t |> equal(whole_word_rule(tb, word), -1, word)
     }
+}
+
+//! the UTF-8 encoding of code point `cp` as a string
+def private utf8_of(cp : int) : string {
+    let bytes <- utf8_encode(uint(cp))
+    return string(bytes)
+}
+
+//! every code point of `probes` matches the one-rule tables of `pattern` iff it lies in `ranges`
+def private check_codepoint_set(t : T?; pattern : string; ranges : array<int2>; probes : array<int>) {
+    let tb <- flex_tables([FlexRule(pattern = pattern)])
+    t |> equal(tb.err, "", pattern)
+    for (cp in probes) {
+        continue if (cp < 0 || cp > int(0x10FFFF) || (cp >= int(0xD800) && cp <= int(0xDFFF)))
+        let inside = find_index_if(ranges) $(r) => cp >= r.x && cp <= r.y
+        t |> equal(whole_word_rule(tb, utf8_of(cp)), inside >= 0 ? 0 : -1, "{pattern} U+{fmt(":X", cp)}")
+    }
+}
+
+[test(description = "a code-point escape outside a set is the UTF-8 bytes of its code point, one unit under a quantifier; an escaped backslash before u stays literal")]
+def test_codepoint_escape(t : T?) {
+    let tb <- flex_tables([FlexRule(pattern = "\\u00e9+"), FlexRule(pattern = "x\\U0001F600"),
+                           FlexRule(pattern = "\\u0041"), FlexRule(pattern = "\\\\u00e9")])
+    t |> equal(tb.err, "")
+    t |> equal(whole_word_rule(tb, "\xC3\xA9\xC3\xA9"), 0)
+    t |> equal(whole_word_rule(tb, "\xC3\xA9\xA9"), -1)
+    t |> equal(whole_word_rule(tb, "x\xF0\x9F\x98\x80"), 1)
+    t |> equal(whole_word_rule(tb, "A"), 2)
+    t |> equal(whole_word_rule(tb, "\\u00e9"), 3)
+    t |> equal(flex_codepoints("[a-z]+\\\\u|x").text, "[a-z]+\\\\u|x")
+}
+
+[test(description = "a set holding a code-point escape is a set of code points - members, ranges, ASCII members, negation - and never a surrogate or a malformed sequence; a set without one stays a set of bytes")]
+def test_codepoint_set(t : T?) {
+    var probes <- [for (cp in range(1, int(0x300))); cp]
+    probes |> push_from([int(0x1F5FF), int(0x1F600), int(0x1F601)])
+    check_codepoint_set(t, "[a-c\\u00e9-\\u00eb\\U0001F600]",
+                        [int2('a', 'c'), int2(int(0xE9), int(0xEB)), int2(int(0x1F600), int(0x1F600))], probes)
+    check_codepoint_set(t, "[^a\\u00e9]", [int2(0, 'a' - 1), int2('a' + 1, int(0xE8)), int2(int(0xEA), int(0x10FFFF))],
+                        [1, 10, 'a', 'b', int(0xE9), int(0xEA), int(0xFFFF), int(0x10FFFF)])
+    let tb <- flex_tables([FlexRule(pattern = "[^a\\u00e9]")])
+    for (word in ["\x80", "\xC3", "\xED\xA0\x80", "\xC0\x80", "\xF4\x90\x80\x80"]) {
+        t |> equal(whole_word_rule(tb, word), -1, word)
+    }
+    let bytes <- flex_tables([FlexRule(pattern = "[\xC3]")])
+    t |> equal(whole_word_rule(bytes, "\xC3"), 0)
+}
+
+[test(description = "[\\u0080-\\U0010FFFF] takes every code point past ASCII at each UTF-8 length boundary and on a stride across the range, and no overlong form, surrogate, lone or cut sequence, or byte past F4")]
+def test_codepoint_full_range(t : T?) {
+    var probes <- [int(0x80), int(0x7FF), int(0x800), int(0xFFF), int(0x1000), int(0xCFFF), int(0xD000), int(0xD7FF), int(0xE000), int(0xFFFD), int(0xFFFF),
+                   int(0x10000), int(0x3FFFF), int(0x40000), int(0xFFFFF), int(0x100000), int(0x10FFFF), int(0x7F), int(0x41)]
+    probes |> push_from([for (k in range(1142)); int(0x80) + k * 977])
+    check_codepoint_set(t, "[\\u0080-\\U0010FFFF]", [int2(int(0x80), int(0x10FFFF))], probes)
+    let tb <- flex_tables([FlexRule(pattern = "[\\u0080-\\U0010FFFF]")])
+    for (word in ["\xC0\x80", "\xC1\xBF", "\xE0\x80\x80", "\xE0\x9F\xBF", "\xED\xA0\x80", "\xED\xBF\xBF",
+                  "\xF0\x80\x80\x80", "\xF0\x8F\xBF\xBF", "\xF4\x90\x80\x80", "\xF5\x80\x80\x80", "\x80",
+                  "\xE2\x86", "\xFF"]) {
+        t |> equal(whole_word_rule(tb, word), -1, word)
+    }
+}
+
+[test(description = "ranges whose ends sit inside a UTF-8 length or continuation block split into exact byte sequences: each end and its neighbours")]
+def test_codepoint_range_splits(t : T?) {
+    let ranges <- [int2(int(0x7E), int(0x81)), int2(int(0x7FF), int(0x801)), int2(int(0xFFF), int(0x1001)), int2(int(0xD7FE), int(0xE001)),
+                   int2(int(0xFFFE), int(0x10001)), int2(int(0x2FFFD), int(0x30003)), int2(int(0x10FFFE), int(0x10FFFF))]
+    var probes : array<int>
+    for (r in ranges) {
+        probes |> push_from([r.x - 2, r.x - 1, r.x, r.x + 1, r.y - 1, r.y, r.y + 1, r.y + 2])
+    }
+    let pattern = "[\\u007E-\\u0081\\u07FF-\\u0801\\u0FFF-\\u1001\\uD7FE-\\uE001\\uFFFE-\\U00010001\\U0002FFFD-\\U00030003\\U0010FFFE-\\U0010FFFF]"
+    check_codepoint_set(t, pattern, ranges, probes)
+}
+
+[test(description = "a malformed code-point escape, or a set form a code-point set does not take, refuses the rule with the reason and its index")]
+def test_codepoint_refused(t : T?) {
+    for (pattern in ["\\u00G1", "\\uD800", "\\U00110000", "\\u00e", "[\\uDFFF]"]) {
+        let tb <- flex_tables([FlexRule(pattern = "b"), FlexRule(pattern = pattern)])
+        t |> success(find(tb.err, "names no code point") >= 0, "{pattern}: {tb.err}")
+        t |> equal(tb.err_rule, 1)
+    }
+    let meta <- flex_tables([FlexRule(pattern = "[\\w\\u00e9]")])
+    t |> success(find(meta.err, "\\w at offset 1 is not taken in a code-point set") >= 0, meta.err)
+    let raw <- flex_tables([FlexRule(pattern = "[\xC3\xA9\\u00e8]")])
+    t |> success(find(raw.err, "spells a character past 127 as \\u or \\U") >= 0, raw.err)
+    let back <- flex_tables([FlexRule(pattern = "[\\u00e9-\\u00a0]")])
+    t |> success(find(back.err, "runs backwards") >= 0, back.err)
+}
+
+//! what the code-point rule's group calls returned
+var private codepoint_groups : array<string>
+
+[flex]
+def codepoint_group_lexer(var lx : FlexLexer) : bool {
+    rule("(\\u00e9+)x") {
+        codepoint_groups |> push(lx |> group(1))
+        lx |> emit(1)
+    }
+}
+
+[test(description = "the group check reads a regex holding a code-point range through the rewrite: an index past the last group fails the compile")]
+def test_codepoint_group_check(t : T?) {
+    let src = ("options gen2\nrequire flex/flex_macro\n[flex]\ndef bad(var lx : FlexLexer) : bool \{\n"
+        + "    rule(\"([\\\\u00e0-\\\\u00ff]+)\") \{\n        print(lx |> group(2))\n    \}\n\}\n")
+    let issues = compile_issues("cpg.das", src)
+    t |> success(find(issues, "group(2) asks for a group the regex does not have (1)") >= 0, issues)
+}
+
+[test(description = "a rule whose regex holds a code-point escape reads its capture groups through the same rewrite")]
+def test_codepoint_group(t : T?) {
+    codepoint_groups |> clear()
+    var lx : FlexLexer
+    let kinds <- lex_tokens(lx, "\xC3\xA9\xC3\xA9x", $(var l : FlexLexer) => codepoint_group_lexer(l),
+                            $(var l : FlexLexer) => l.tok.kind)
+    t |> equal(kinds, [1])
+    t |> equal(codepoint_groups, ["\xC3\xA9\xC3\xA9"])
 }
 
 [test(description = "a regex form a DFA cannot carry is refused as not carried by dasFlex, with no pointer to an unsupported form; the tables name the refused rule's index")]
