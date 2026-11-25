@@ -645,6 +645,17 @@ def test_minimized_keywords(t : T?) {
     }
 }
 
+[test(description = "`.` is one UTF-8 code point of one to four bytes, never a newline, never two code points or a malformed sequence")]
+def test_dot_is_one_code_point(t : T?) {
+    let tb <- flex_tables([FlexRule(pattern = ".")])
+    for (word in ["a", "~", "\t", "é", "→", "😀", "\xF4\x8F\xBF\xBF"]) {
+        t |> equal(whole_word_rule(tb, word), 0, word)
+    }
+    for (word in ["\n", "ab", "é→", "\xC0\x80", "\xE2\x86", "\xF5\x80\x80\x80", "\x80"]) {
+        t |> equal(whole_word_rule(tb, word), -1, word)
+    }
+}
+
 [test(description = "a regex form a DFA cannot carry is refused as not carried by dasFlex, with no pointer to an unsupported form")]
 def test_refused_forms(t : T?) {
     for (pattern in ["^a", "a$", "\\ba", "a+?"]) {
