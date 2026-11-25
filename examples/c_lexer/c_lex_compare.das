@@ -337,14 +337,7 @@ def lex_regex(text : string; typedefs : table<string; int>;
             continue if (kind == -1)
             var k = kind
             if (kind == -2) {
-                let word = slice(d, start, best_end)
-                k = int(CTok.IDENTIFIER)
-                KEYWORDS |> get(word) $(kk) {
-                    k = int(kk)
-                }
-                if (k == int(CTok.IDENTIFIER) && typedefs |> key_exists(word)) {
-                    k = int(CTok.TYPEDEF_NAME)
-                }
+                k = c_word_kind_of(slice(d, start, best_end), typedefs)
             } elif (kind == -3) {
                 k = int(d[start])
             }

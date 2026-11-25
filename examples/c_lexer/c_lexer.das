@@ -142,18 +142,20 @@ let private TOKEN_NAMES <- { for (k in each(type<CTok>)); int(k) => string(k) }
 //! the yacc name of a token kind; a single-character token prints as itself
 def c_token_name(kind : int) : string => TOKEN_NAMES?[kind] ?? to_char(kind)
 
-//! identifier, keyword, or typedef name: the rule action's decision
-def c_word_kind(var lx : FlexLexer) : int {
-    let word = text(lx)
+//! identifier, keyword, or typedef name: the kind of `word`, `typedefs` holding the typedef names
+def c_word_kind_of(word : string; typedefs : table<string; int>) : int {
     var kind = int(CTok.IDENTIFIER)
     KEYWORDS |> get(word) $(k) {
         kind = int(k)
     }
-    if (kind == int(CTok.IDENTIFIER) && lx.symbols |> key_exists(word)) {
+    if (kind == int(CTok.IDENTIFIER) && typedefs |> key_exists(word)) {
         kind = int(CTok.TYPEDEF_NAME)
     }
     return kind
 }
+
+//! the identifier rule's decision on the token, through the lexer's typedef table
+def c_word_kind(var lx : FlexLexer) : int => c_word_kind_of(text(lx), lx.symbols)
 
 //! a one-byte punctuator is its own kind
 [inline]
