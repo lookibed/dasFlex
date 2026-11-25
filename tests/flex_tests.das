@@ -540,6 +540,17 @@ def test_text_access(t : T?) {
     t |> equal(lx.tok.len, 5)
 }
 
+[test(description = "flex_at_end is true once the cursor has passed the last byte, not while bytes a rule may skip remain")]
+def test_at_end(t : T?) {
+    var lx : FlexLexer
+    flex_open(lx, "ab ", "t.txt")
+    t |> success(!flex_at_end(lx))
+    mini(lx)
+    t |> success(!flex_at_end(lx))
+    t |> success(!mini(lx))
+    t |> success(flex_at_end(lx))
+}
+
 [test(description = "a rule may consult lx.symbols before deciding the kind")]
 def test_symbols_table(t : T?) {
     var lx : FlexLexer
@@ -676,13 +687,19 @@ def test_dot_is_one_code_point(t : T?) {
     }
 }
 
-[test(description = "a regex form a DFA cannot carry is refused as not carried by dasFlex, with no pointer to an unsupported form")]
+[test(description = "a regex form a DFA cannot carry is refused as not carried by dasFlex, with no pointer to an unsupported form; the tables name the refused rule's index")]
 def test_refused_forms(t : T?) {
     for (pattern in ["^a", "a$", "\\ba", "a+?"]) {
-        let tb <- flex_tables([FlexRule(pattern = pattern)])
+        let tb <- flex_tables([FlexRule(pattern = "b"), FlexRule(pattern = pattern)])
         t |> success(find(tb.err, "does not fit a DFA and is not carried by dasFlex") >= 0, tb.err)
         t |> success(find(tb.err, "trailing context") < 0, tb.err)
+        t |> equal(tb.err_rule, 1)
     }
+    let unparsed <- flex_tables([FlexRule(pattern = "b"), FlexRule(pattern = "(a")])
+    t |> equal(unparsed.err, "rule 1: regex '(a' does not parse")
+    t |> equal(unparsed.err_rule, 1)
+    let clean <- flex_tables([FlexRule(pattern = "b")])
+    t |> equal(clean.err_rule, -1)
 }
 
 [test(description = "start states of two conditions merge when their languages coincide and stay apart when they differ")]

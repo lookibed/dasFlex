@@ -12,7 +12,6 @@ require daslib/defer
 require daslib/strings_boost
 require daslib/regex
 require math
-require strings
 
 require flex/flex_regex
 require flex/flex_dfa
@@ -698,10 +697,6 @@ def private flex_shape(args : AnnotationArgumentList) : FlexShape {
 //! a failure that belongs to one rule is reported at that rule's line; the annotation fails with a
 //! pointer to it
 def private fail_rule(msg : string; site : Expression const?; var errors : das_string) : bool {
-    if (site == null) {
-        errors := msg
-        return false
-    }
     compiling_program() |> macro_error(site.at, msg)
     errors := "see the error at line {int(site.at.line)}"
     return false
@@ -721,13 +716,7 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
         return false
     }
     let t <- flex_tables(spec.rules, length(spec.cond_names))
-    if (!empty(t.err)) {
-        for (arm in spec.arms) {
-            return fail_rule(t.err, arm.site, errors) if (starts_with(t.err, "rule {arm.rule}:"))
-        }
-        errors := t.err
-        return false
-    }
+    return fail_rule(t.err, spec.arms[t.err_rule].site, errors) if (!empty(t.err))
     let lx = string(func.arguments[0].name)
     to_log(LOG_INFO, "[flex] {func.name}: mode {shape.mode} dispatch {shape.dispatch}\n")
     let g_next = "{func.name}`flex`next"

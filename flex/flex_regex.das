@@ -27,6 +27,7 @@ struct Nfa {
     accept : array<int>         //!< per state: the rule id it accepts, or -1
     starts : array<int>         //!< per start condition: its start state
     err : string                //!< "" while every rule compiled, else the first refusal
+    err_rule : int = -1         //!< the rule `err` names
 }
 
 //! A fragment: entry state and exit state (the exit has no outgoing edges yet).
@@ -51,13 +52,6 @@ def add_edge(var n : Nfa; from, lo, hi, to : int) {
 
 def add_eps(var n : Nfa; from, to : int) {
     n.eps[from] |> push(to)
-}
-
-def frag_byte_range(var n : Nfa; lo, hi : int) : Frag {
-    let a = new_state(n)
-    let b = new_state(n)
-    add_edge(n, a, lo, hi, b)
-    return Frag(first = a, last = b)
 }
 
 //! a fragment that accepts the bytes of `text` in order
@@ -149,13 +143,6 @@ def frag_star(var n : Nfa; x : Frag) : Frag {
     return Frag(first = a, last = b)
 }
 
-def frag_plus(var n : Nfa; x : Frag) : Frag {
-    let b = new_state(n)
-    add_eps(n, x.last, x.first)
-    add_eps(n, x.last, b)
-    return Frag(first = x.first, last = b)
-}
-
 [arch(at="../ARCHITECTURE.md#not-carried")]
 def private refuse(var n : Nfa; what : string; node : ReNode?) {
     if (empty(n.err)) {
@@ -233,7 +220,7 @@ struct FlexRule {
 //! (condition 0 is the default one; an `inclusive` condition lists the default rules too - the caller decides).
 //! `err` names the first regex that failed to parse or to fit a DFA.
 def build_nfa(rules : array<FlexRule>; ncond : int) : Nfa {
-    var n : Nfa
+    var n = Nfa()
     n.starts |> resize(ncond)
     for (c in range(ncond)) {
         n.starts[c] = new_state(n)
@@ -242,11 +229,13 @@ def build_nfa(rules : array<FlexRule>; ncond : int) : Nfa {
         var re : Regex
         if (!regex_compile(re, r.pattern)) {
             n.err = "rule {i}: regex '{r.pattern}' does not parse"
+            n.err_rule = i
             return <- n
         }
         let f = frag_of(n, re.root)
         if (!empty(n.err)) {
             n.err = "rule {i}: {n.err}"
+            n.err_rule = i
             return <- n
         }
         n.accept[f.last] = i

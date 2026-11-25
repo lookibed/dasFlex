@@ -21,6 +21,7 @@ struct FlexTables {
     accept : array<int>
     start : array<int>
     err : string
+    err_rule : int = -1     //!< the rule `err` names
 }
 
 //! the finest partition of the byte alphabet every edge is a union of; `\n` is a class of its own
@@ -68,10 +69,9 @@ def private eps_closure(n : Nfa; var states : array<int>) {
 
 def private set_key(states : array<int>) : string => join(states, ",")
 
-//! Subset construction. The result's `err` repeats the NFA's.
+//! Subset construction. The result's `err` and `err_rule` repeat the NFA's.
 def build_tables(n : Nfa) : FlexTables {
-    var t : FlexTables
-    t.err = n.err
+    var t = FlexTables(err = n.err, err_rule = n.err_rule)
     return <- t if (!empty(n.err))
     t.nclasses = byte_classes(n, t.class_of)
     var class_rep_byte : array<int>
