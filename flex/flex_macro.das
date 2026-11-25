@@ -246,22 +246,35 @@ def private top_conditions(spec : FlexSpec) : array<int> {
     return <- top_conds
 }
 
-def private collect_rules(var spec : FlexSpec; body : ExprBlock?; lx : string) {
-    var rw = new ActionRewrite(cond_names := spec.cond_names, lx = lx)
+//! every statement of `body` to `each` as a call, with the rewriter of the rule bodies (`lx` named
+//! implicitly when `implicit_lexer`), until a failure; a statement that is not a call fails with
+//! `not_call`
+def private collect_calls(var spec : FlexSpec; body : ExprBlock?; lx, tokens : string;
+                          implicit_lexer : bool; not_call : string;
+                          each : block<(var rw : ActionRewrite?; call : ExprCall?) : void>) {
+    var rw = new ActionRewrite(cond_names := spec.cond_names, lx = lx,
+                               implicit_lexer = implicit_lexer,
+                               tokens = tokens)
     defer() {
         unsafe {
             delete rw
         }
     }
-    let top_conds <- top_conditions(spec)
-    var cond_no = 0
     for (st in body.list) {
         return if (!empty(spec.err))
         if (!(st is ExprCall)) {
-            fail_at(spec, "only rule(...) and condition(...) calls belong in a [flex] body", st)
+            fail_at(spec, not_call, st)
             return
         }
-        let call = st as ExprCall
+        invoke(each, rw, st as ExprCall)
+    }
+}
+
+def private collect_rules(var spec : FlexSpec; body : ExprBlock?; lx : string) {
+    let top_conds <- top_conditions(spec)
+    var cond_no = 0
+    let not_call = "only rule(...) and condition(...) calls belong in a [flex] body"
+    collect_calls(spec, body, lx, "", false, not_call) $(var rw; call) {
         if (call.name == "rule") {
             collect_rule(spec, call, 2, top_conds, rw)
         } elif (call.name == "condition") {
@@ -737,27 +750,36 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
     return true
 }
 
+//! what both annotations do around their front end: one lexer argument, a known shape, the spec of
+//! `func` filled by `collect` from the lexer parameter's name, then `flex_generate`
+def private flex_apply(var func : FunctionPtr; args : AnnotationArgumentList; tag : string;
+                       var errors : das_string;
+                       collect : block<(var spec : FlexSpec; lx : string) : void>) : bool {
+    if (length(func.arguments) != 1) {
+        errors := "[{tag}] takes one argument: var lx : FlexLexer"
+        return false
+    }
+    let shape = flex_shape(args)
+    if (!empty(shape.err)) {
+        errors := shape.err
+        return false
+    }
+    var spec = FlexSpec(func_name = string(func.name))
+    invoke(collect, spec, string(func.arguments[0].name))
+    return flex_generate(func, spec, shape, errors)
+}
+
 [function_macro(name="flex")]
 class FlexMacro : AstFunctionAnnotation {
     def override apply(var func : FunctionPtr; var group : ModuleGroup;
                        var args : AnnotationArgumentList; var errors : das_string) : bool {
-        if (length(func.arguments) != 1) {
-            errors := "[flex] takes one argument: var lx : FlexLexer"
-            return false
+        let body = func.body as ExprBlock
+        return flex_apply(func, args, "flex", errors) $(var spec; lx) {
+            collect_conditions(spec, body)
+            if (empty(spec.err)) {
+                collect_rules(spec, body, lx)
+            }
         }
-        let shape = flex_shape(args)
-        if (!empty(shape.err)) {
-            errors := shape.err
-            return false
-        }
-        var spec : FlexSpec
-        spec.func_name = string(func.name)
-        var body = func.body as ExprBlock
-        collect_conditions(spec, body)
-        if (empty(spec.err)) {
-            collect_rules(spec, body, string(func.arguments[0].name))
-        }
-        return flex_generate(func, spec, shape, errors)
     }
 }
 
@@ -796,20 +818,8 @@ def private text_rule_conditions(var spec : FlexSpec; names : string;
 }
 
 def private collect_text_rules(var spec : FlexSpec; body : ExprBlock?; lx, tokens : string) {
-    var rw = new ActionRewrite(cond_names := spec.cond_names, lx = lx, implicit_lexer = true,
-                               tokens = tokens)
-    defer() {
-        unsafe {
-            delete rw
-        }
-    }
-    for (st in body.list) {
-        return if (!empty(spec.err))
-        if (!(st is ExprCall)) {
-            fail_at(spec, "only rule(...) calls belong in a [flex_text] body", st)
-            return
-        }
-        let call = st as ExprCall
+    let not_call = "only rule(...) calls belong in a [flex_text] body"
+    collect_calls(spec, body, lx, tokens, true, not_call) $(var rw; call) {
         if (call.name != "rule" || length(call.arguments) != 3
             || !(call.arguments[1] is ExprConstString)) {
             fail_at(spec, "rule(\"regex\", \"conditions\") \{ ... \} expected", call)
@@ -828,20 +838,10 @@ def private collect_text_rules(var spec : FlexSpec; body : ExprBlock?; lx, token
 class FlexTextMacro : AstFunctionAnnotation {
     def override apply(var func : FunctionPtr; var group : ModuleGroup;
                        var args : AnnotationArgumentList; var errors : das_string) : bool {
-        if (length(func.arguments) != 1) {
-            errors := "[flex_text] takes one argument: var lx : FlexLexer"
-            return false
+        let body = func.body as ExprBlock
+        return flex_apply(func, args, "flex_text", errors) $(var spec; lx) {
+            text_conditions(spec, string_arg(args, "conditions", ""))
+            collect_text_rules(spec, body, lx, string_arg(args, "tokens", ""))
         }
-        let shape = flex_shape(args)
-        if (!empty(shape.err)) {
-            errors := shape.err
-            return false
-        }
-        var spec : FlexSpec
-        spec.func_name = string(func.name)
-        text_conditions(spec, string_arg(args, "conditions", ""))
-        collect_text_rules(spec, func.body as ExprBlock, string(func.arguments[0].name),
-                           string_arg(args, "tokens", ""))
-        return flex_generate(func, spec, shape, errors)
     }
 }
