@@ -76,6 +76,33 @@ DIGIT   [0-9]
   definition `{NAME}` is not one), and `lx` is the lexer (`text(lx)`, `lx.symbols`).
 - Errors - a bad regex, an unknown condition or token - are reported at the rule's line.
 
+## Speed
+
+One `heavy --exclusive` run on a quiet machine, three preprocessed C files, ms per pass: the median
+of 3 rounds, each round the median of 9 passes in one process (one process per driver and file).
+The daslang rows are `examples/c_lexer/c_lex_compare.das`; every driver yields the same 17 207 /
+13 474 / 16 484 raw tokens.
+
+| driver | what the timed loop does | doom_am_map.i | doom_p_mobj.i | wasm3_m3_parse.i |
+|---|---|---|---|---|
+| dasFlex, count only, interp | `--mode flex --count`: the scanner counts tokens; the identifier rule builds the word's string and looks it up as keyword and typedef name | 9.261 | 8.133 | 9.640 |
+| dasFlex, count only, JIT | same, `-jit` | 0.714 | 0.642 | 0.736 |
+| dasFlex, token array, interp | `--mode flex`: the above plus `text()` per token and a `{kind, text, line}` array; opens the lexer (typedef table copied) inside the timer | 10.934 | 9.259 | 11.055 |
+| dasFlex, token array, JIT | same, `-jit` | 1.086 | 0.937 | 1.092 |
+| hand-written lexer, interp | `--mode probe`: a byte loop, keyword and typedef lookup, a string per token, the same array | 6.514 | 5.524 | 6.377 |
+| hand-written lexer, JIT | same, `-jit` | 1.041 | 0.811 | 1.305 |
+| hand-written lexer, C `-O2` | a C port of `--mode probe`: `malloc` per token text, the same array, freed inside the timer | 1.542 | 1.046 | 0.794 |
+| chibicc `tok`, C `-O2` | chibicc's `tokenize()`, punctuators and prefixes picked by the first byte (local edits) | 2.237 | 1.814 | 2.174 |
+| chibicc `fast`, C `-O2` | the same plus an arena allocator, ASCII character classes and the identifier hash taken while lexing | 1.953 | 1.600 | 1.927 |
+
+chibicc's `tokenize()` does work the dasFlex rows do not: it allocates a token per token (`calloc` in
+`tok`, the arena in `fast`), decodes every string literal into a fresh buffer, and numbers lines in a
+second pass over the token list; it does not tell keywords from identifiers and has no typedef
+lookup. Against `fast` the count-only JIT row takes 2.49-2.74x less time, the token-array JIT row
+1.71-1.80x less. The C lexer in `examples/c_lexer` does not carry `$` or Unicode in identifiers,
+`#` and `##` tokens, or chibicc's `has_space` / `at_bol` flags. Method and the step-by-step history:
+`PERF_LEDGER.md`.
+
 Install: `daspkg install github.com/lookibed/dasFlex`, then `require flex/flex_macro`.
 Run the tests from a daslang checkout: `daslang -load_module <dasFlex> dastest/dastest.das -- --test <dasFlex>/tests`.
 Design and the rules a change must keep: `ARCHITECTURE.md`, `REVIEW.md`. A JSON lexer walk-through:
