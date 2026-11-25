@@ -230,3 +230,22 @@ def test_group_errors(t : T?) {
         t |> success(find(issues, "g3.das:8:") >= 0, issues)
     }
 }
+
+[test(description = "a type error in the arguments of emit or group is reported at the rule body's line, in both forms")]
+def test_action_error_lines(t : T?) {
+    t |> run("[flex]: emit and group") @(t : T?) {
+        let src = ("options gen2\nrequire flex/flex_macro\n[flex]\ndef bad(var lx : FlexLexer) : bool \{\n"
+            + "    rule(\"a\") \{\n        lx |> emit(\"oops\")\n    \}\n"
+            + "    rule(\"b(c)\") \{\n        print(lx |> group(\"x\"))\n    \}\n\}\n")
+        let issues = compile_issues("a1.das", src)
+        t |> success(find(issues, "a1.das:6:") >= 0, issues)
+        t |> success(find(issues, "a1.das:9:") >= 0, issues)
+        t |> success(find(issues, "flex_macro.das") < 0, issues)
+    }
+    t |> run("reader: emit") @(t : T?) {
+        let issues = compile_issues("a2.das",
+                                    reader_module("", "\"a\"  \{ emit(A) \}\nb   \{ emit(\"oops\") \}\n"))
+        t |> success(find(issues, "a2.das:9:") >= 0, issues)
+        t |> success(find(issues, "flex_macro.das") < 0, issues)
+    }
+}

@@ -77,10 +77,15 @@ class private BeginRewrite : AstVisitor {
         }
         if (expr.name == "emit" && length(expr.arguments) == 2) {
             var inlined = qmacro_block() {
-                $e(expr.arguments[0]).tok.kind = int($e(expr.arguments[1]))  // nolint:PERF020,LINT019 - an enum or an int kind
+                static_if (typeinfo stripped_typename($e(expr.arguments[1])) == "int") {
+                    $e(expr.arguments[0]).tok.kind = $e(expr.arguments[1])
+                } else {
+                    $e(expr.arguments[0]).tok.kind = int($e(expr.arguments[1]))
+                }
                 $e(expr.arguments[0]).emitted = true
             }
             mark_generated(inlined)
+            inlined |> force_at(expr.at)
             return inlined
         }
         if (expr.name == "begin" && length(expr.arguments) == 2
@@ -110,7 +115,9 @@ class private BeginRewrite : AstVisitor {
             group_max = max(group_max, (expr.arguments[1] as ExprConstInt).value)
         }
         let fname = expr.name == "group" ? "flex_group" : "flex_group_span"
-        return qmacro($c(fname)($e(expr.arguments[0]), $i(group_re), $e(expr.arguments[1])))
+        var call = qmacro($c(fname)($e(expr.arguments[0]), $i(group_re), $e(expr.arguments[1])))
+        call |> force_at(expr.at)
+        return call
     }
     //! `emit(kind)` becomes `emit(lx, kind)`, `emit(NAME)` `emit(lx, tokens.NAME)`, `begin(NAME)`
     //! `begin(lx, "NAME")`
