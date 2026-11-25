@@ -606,6 +606,43 @@ def test_minimized_state_counts(t : T?) {
     }
 }
 
+//! the 32 keywords of C89, each a rule of its own, then an identifier rule that also matches every one
+def private keyword_rules() : array<FlexRule> {
+    let words <- ["auto", "break", "case", "char", "const", "continue", "default", "do", "double",
+                  "else", "enum", "extern", "float", "for", "goto", "if", "int", "long", "register",
+                  "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef",
+                  "union", "unsigned", "void", "volatile", "while"]
+    var rules <- [for (w in words); FlexRule(pattern = w)]
+    rules |> emplace(FlexRule(pattern = "[a-zA-Z_][a-zA-Z_0-9]*"))
+    return <- rules
+}
+
+//! the rule the whole of `word` matches through `flex_match_table` over `tb`, -1 when the longest
+//! match is shorter than the word
+def private whole_word_rule(tb : FlexTables; word : string) : int {
+    var lx : FlexLexer
+    flex_open(lx, word)
+    var len = 0
+    let rule = flex_match_table(lx, tb.next, tb.accept, tb.class_of, tb.nclasses, tb.start[0], len)
+    return len == length(word) ? rule : -1
+}
+
+[test(description = "Hopcroft's refinement keeps apart the states of 32 keyword rules and an identifier rule: 143 states, every keyword its own rule, every keyword prefix or extension an identifier")]
+def test_minimized_keywords(t : T?) {
+    let rules <- keyword_rules()
+    let tb <- flex_tables(rules)
+    t |> equal(tb.nstates, 143)
+    let ident = length(rules) - 1
+    for (i, r in count(), rules) {
+        continue if (i == ident)
+        t |> equal(whole_word_rule(tb, r.pattern), i, r.pattern)
+        let short_word = slice(r.pattern, 0, length(r.pattern) - 1)
+        t |> equal(whole_word_rule(tb, short_word), ident, short_word)
+        t |> equal(whole_word_rule(tb, r.pattern + "x"), ident, "{r.pattern}x")
+        t |> equal(whole_word_rule(tb, r.pattern + "_1"), ident, "{r.pattern}_1")
+    }
+}
+
 [test(description = "a regex form a DFA cannot carry is refused as not carried by dasFlex, with no pointer to an unsupported form")]
 def test_refused_forms(t : T?) {
     for (pattern in ["^a", "a$", "\\ba", "a+?"]) {
