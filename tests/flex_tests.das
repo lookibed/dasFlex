@@ -311,6 +311,23 @@ def shape_goto_tree(var lx : FlexLexer) : bool {
     }
 }
 
+// what the user's own `emit` below received
+var private user_emits : array<int>
+
+def private emit(var a : array<int>; v : int) {
+    a |> push(v)
+}
+
+[flex]
+def user_emit_lexer(var lx : FlexLexer) : bool {
+    rule("[0-9]+") {
+        emit(user_emits, lx.tok.len)
+        lx |> emit(TTok.NUM)
+    }
+    rule(" +") {
+    }
+}
+
 [flex]
 def with_inclusive(var lx : FlexLexer) : bool {
     rule("[a-z]+") {
@@ -507,6 +524,19 @@ def test_rule_body_scopes(t : T?) {
     for (shape in ["table_if", "table_goto", "table_tree", "goto_if", "goto_goto", "goto_tree"]) {
         t |> equal(stream_of(src, shape), want)
     }
+}
+
+[test(description = "a call named emit whose first argument is not the lexer is the user's own function, left as written")]
+def test_user_emit_untouched(t : T?) {
+    user_emits |> clear()
+    var lx : FlexLexer
+    flex_open(lx, "1 22 333", "t.txt")
+    var kinds : array<int>
+    while (user_emit_lexer(lx)) {
+        kinds |> push(lx.tok.kind)
+    }
+    t |> equal(kinds, [int(TTok.NUM), int(TTok.NUM), int(TTok.NUM)])
+    t |> equal(user_emits, [1, 2, 3])
 }
 
 [test(description = "text() returns the matched bytes and text_is compares without allocating")]

@@ -47,12 +47,15 @@ struct private FlexSpec {
 
 //! `begin(lx, "NAME")` in a rule body becomes `begin(lx, <index>)`; `emit(lx, kind)` becomes the two
 //! field writes it stands for, so a rule body makes no call for its one-line action;
-//! `group(lx, n)` and `group_span(lx, n)` become calls on the rule's group regex `group_re`. With
-//! `lx` set (the `%flex~` reader), `emit(kind)`, `begin(NAME)` and `group(n)` name the lexer
-//! implicitly, and a bare name in `emit` is a member of the enum `tokens`
-class private BeginRewrite : AstVisitor {
+//! `group(lx, n)` and `group_span(lx, n)` become calls on the rule's group regex `group_re`. Only a
+//! call whose first argument is the lexer parameter `lx` is rewritten. With `implicit_lexer` (the
+//! `%flex~` reader), `emit(kind)`, `begin(NAME)` and `group(n)` name the lexer implicitly, and a
+//! bare name in `emit` is a member of the enum `tokens`
+[arch(at="../ARCHITECTURE.md#rule-bodies")]
+class private ActionRewrite : AstVisitor {
     cond_names : array<string>
     lx : string
+    implicit_lexer : bool
     tokens : string
     err : string
     err_site : Expression const?
@@ -61,7 +64,7 @@ class private BeginRewrite : AstVisitor {
     group_max : int                 //!< the highest constant group index the rule asks for
     def override visitExprCall(var expr : ExprCall?) : ExpressionPtr {
         let is_group = expr.name == "group" || expr.name == "group_span"
-        if (!empty(lx) && length(expr.arguments) == 1) {
+        if (implicit_lexer && length(expr.arguments) == 1) {
             if (expr.name == "emit" || expr.name == "begin") {
                 add_implicit_lexer(expr)
             } elif (is_group) {
@@ -72,10 +75,11 @@ class private BeginRewrite : AstVisitor {
                 expr.arguments |> emplace(index)
             }
         }
-        if (is_group && length(expr.arguments) == 2) {
+        return <- expr if (length(expr.arguments) != 2 || !is_lexer(expr.arguments[0]))
+        if (is_group) {
             return group_call(expr)
         }
-        if (expr.name == "emit" && length(expr.arguments) == 2) {
+        if (expr.name == "emit") {
             var inlined = qmacro_block() {
                 static_if (typeinfo stripped_typename($e(expr.arguments[1])) == "int") {
                     $e(expr.arguments[0]).tok.kind = $e(expr.arguments[1])
@@ -88,8 +92,7 @@ class private BeginRewrite : AstVisitor {
             inlined |> force_at(expr.at)
             return inlined
         }
-        if (expr.name == "begin" && length(expr.arguments) == 2
-            && expr.arguments[1] is ExprConstString) {
+        if (expr.name == "begin" && expr.arguments[1] is ExprConstString) {
             let cname = string((expr.arguments[1] as ExprConstString).value)
             var idx = -1
             for (i, n in count(), cond_names) {
@@ -108,6 +111,8 @@ class private BeginRewrite : AstVisitor {
         }
         return <- expr
     }
+    def is_lexer(e : ExpressionPtr) : bool => e is ExprVar && (e as ExprVar).name == lx
+
     //! `group(lx, n)` becomes `flex_group(lx, <the rule's regex>, n)`, `group_span` likewise
     def group_call(var expr : ExprCall?) : ExpressionPtr {
         uses_groups = true
@@ -164,7 +169,7 @@ def private check_groups(var spec : FlexSpec; pattern : string; group_max : int;
 
 //! `rule("regex", ...) { body }` with `nargs` arguments, the block last: the rule active in `conds`
 def private collect_rule(var spec : FlexSpec; call : ExprCall?; nargs : int; conds : array<int>;
-                         var rw : BeginRewrite?) {
+                         var rw : ActionRewrite?) {
     if (length(call.arguments) != nargs || !(call.arguments[0] is ExprConstString)
         || !(call.arguments[nargs - 1] is ExprMakeBlock)) {
         fail_at(spec, "rule(\"regex\") \{ ... \} expected", call)
@@ -236,8 +241,8 @@ def private top_conditions(spec : FlexSpec) : array<int> {
     return <- top_conds
 }
 
-def private collect_rules(var spec : FlexSpec; body : ExprBlock?) {
-    var rw = new BeginRewrite(cond_names := spec.cond_names)
+def private collect_rules(var spec : FlexSpec; body : ExprBlock?; lx : string) {
+    var rw = new ActionRewrite(cond_names := spec.cond_names, lx = lx)
     defer() {
         unsafe {
             delete rw
@@ -764,7 +769,7 @@ class FlexMacro : AstFunctionAnnotation {
         var body = func.body as ExprBlock
         collect_conditions(spec, body)
         if (empty(spec.err)) {
-            collect_rules(spec, body)
+            collect_rules(spec, body, string(func.arguments[0].name))
         }
         return flex_generate(func, spec, shape, errors)
     }
@@ -805,7 +810,8 @@ def private text_rule_conditions(var spec : FlexSpec; names : string;
 }
 
 def private collect_text_rules(var spec : FlexSpec; body : ExprBlock?; lx, tokens : string) {
-    var rw = new BeginRewrite(cond_names := spec.cond_names, lx = lx, tokens = tokens)
+    var rw = new ActionRewrite(cond_names := spec.cond_names, lx = lx, implicit_lexer = true,
+                               tokens = tokens)
     defer() {
         unsafe {
             delete rw
