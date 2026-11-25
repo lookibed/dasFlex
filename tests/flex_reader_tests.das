@@ -97,13 +97,11 @@ c                   {
 //! the tokens of `src` as `kind:text` from one of the reader lexers, then the error text
 def stream(src, which : string) : array<string> {
     var lx : FlexLexer
-    flex_open(lx, src, "t.txt")
-    var out : array<string>
-    while (which == "kinds" ? r_kinds(lx) : which == "defs" ? r_defs(lx)
-           : which == "groups" ? r_groups(lx) : which == "braces" ? r_braces(lx)
-           : which == "alt" ? r_alt(lx) : r_untyped(lx)) {
-        out |> push("{lx.tok.kind}:{text(lx)}")
-    }
+    var out <- lex_tokens(lx, src, $(var l : FlexLexer) {
+        return (which == "kinds" ? r_kinds(l) : which == "defs" ? r_defs(l)
+            : which == "groups" ? r_groups(l) : which == "braces" ? r_braces(l)
+            : which == "alt" ? r_alt(l) : r_untyped(l))
+    }, $(var l : FlexLexer) => "{l.tok.kind}:{text(l)}")
     out |> push(lx.err)
     return <- out
 }

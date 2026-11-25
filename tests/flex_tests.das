@@ -99,22 +99,13 @@ def with_inclusive(var lx : FlexLexer) : bool {
 
 def kinds_of(src : string) : array<int> {
     var lx : FlexLexer
-    flex_open(lx, src, "t.txt")
-    var out : array<int>
-    while (mini(lx)) {
-        out |> push(lx.tok.kind)
-    }
-    return <- out
+    return <- lex_tokens(lx, src, $(var l : FlexLexer) => mini(l),
+                         $(var l : FlexLexer) => l.tok.kind)
 }
 
 def texts_of(src : string) : array<string> {
     var lx : FlexLexer
-    flex_open(lx, src, "t.txt")
-    var out : array<string>
-    while (mini(lx)) {
-        out |> push(text(lx))
-    }
-    return <- out
+    return <- lex_tokens(lx, src, $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => text(l))
 }
 
 [test(description = "every rule of the small lexer emits its kind on its own input")]
@@ -160,11 +151,8 @@ def test_start_conditions(t : T?) {
     }
     t |> run("an inclusive condition keeps the default rules and adds its own") @(t : T?) {
         var lx : FlexLexer
-        flex_open(lx, "ab <cd 12> 34", "t.txt")
-        var kinds : array<int>
-        while (with_inclusive(lx)) {
-            kinds |> push(lx.tok.kind)
-        }
+        let kinds <- lex_tokens(lx, "ab <cd 12> 34", $(var l : FlexLexer) => with_inclusive(l),
+                                $(var l : FlexLexer) => l.tok.kind)
         // 34 outside the angle brackets matches no rule: the error is reported, not swallowed
         t |> equal(kinds, [int(TTok.IDENT), int(TTok.IDENT), int(TTok.NUM)])
         t |> success(lx.failed)
@@ -192,12 +180,9 @@ def test_unicode(t : T?) {
 [test(description = "a byte no rule accepts stops the lexer with file:line:col and the character")]
 def test_error_position(t : T?) {
     var lx : FlexLexer
-    flex_open(lx, "x = 1\n  y § 2", "t.txt")
-    var n = 0
-    while (mini(lx)) {
-        n++
-    }
-    t |> equal(n, 4)
+    let texts <- lex_tokens(lx, "x = 1\n  y § 2", $(var l : FlexLexer) => mini(l),
+                            $(var l : FlexLexer) => text(l))
+    t |> equal(texts, ["x", "=", "1", "y"])
     t |> success(lx.failed)
     t |> equal(lx.err, "t.txt:2:5: unexpected '§'")
     t |> equal(lx.tok.line, 2)
@@ -313,11 +298,8 @@ def test_rule_body_scopes(t : T?) {
 def test_user_emit_untouched(t : T?) {
     user_emits |> clear()
     var lx : FlexLexer
-    flex_open(lx, "1 22 333", "t.txt")
-    var kinds : array<int>
-    while (user_emit_lexer(lx)) {
-        kinds |> push(lx.tok.kind)
-    }
+    let kinds <- lex_tokens(lx, "1 22 333", $(var l : FlexLexer) => user_emit_lexer(l),
+                            $(var l : FlexLexer) => l.tok.kind)
     t |> equal(kinds, [int(TTok.NUM), int(TTok.NUM), int(TTok.NUM)])
     t |> equal(user_emits, [1, 2, 3])
 }
@@ -350,10 +332,8 @@ def test_at_end(t : T?) {
 def test_symbols_table(t : T?) {
     var lx : FlexLexer
     lx.symbols["size_t"] = 1
-    flex_open(lx, "size_t n", "t.txt")
-    var words : array<string>
-    while (mini(lx)) {
-        words |> push(lx.symbols |> key_exists(text(lx)) ? "type" : "name")
+    let words <- lex_tokens(lx, "size_t n", $(var l : FlexLexer) => mini(l)) $(var l : FlexLexer) {
+        return l.symbols |> key_exists(text(l)) ? "type" : "name"
     }
     t |> equal(words, ["type", "name"])
 }
@@ -622,11 +602,8 @@ def groups_with_actions(var lx : FlexLexer) : bool {
 def test_group_with_text_emit_begin(t : T?) {
     group_log |> clear()
     var lx : FlexLexer
-    flex_open(lx, "ab<12> cd<3>", "t.txt")
-    var toks : array<string>
-    while (groups_with_actions(lx)) {
-        toks |> push("{lx.tok.kind}:{text(lx)}@{lx.tok.col}")
-    }
+    let toks <- lex_tokens(lx, "ab<12> cd<3>", $(var l : FlexLexer) => groups_with_actions(l),
+                           $(var l : FlexLexer) => "{l.tok.kind}:{text(l)}@{l.tok.col}")
     t |> equal(toks, ["1:ab<@1", "2:12>@4", "1:cd<@8", "2:3>@11"])
     t |> equal(group_log, ["ab<|ab|ab<", "12|12>", "cd<|cd|cd<", "3|3>"])
     t |> success(!lx.failed)

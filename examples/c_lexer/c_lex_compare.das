@@ -173,44 +173,37 @@ let PUNCT2 <- {
     "!=" => CTok.NE_OP
 }
 
+//! every token `scan` takes from `lx`
+def flex_tokens(var lx : FlexLexer; scan : block<(var lx : FlexLexer) : bool>) : array<Tok> {
+    var out : array<Tok>
+    while (invoke(scan, lx)) {
+        out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+    }
+    return <- out
+}
+
 //! the dasFlex lexer in one of its generated shapes: raw tokens
 def lex_flex(text : string; typedefs : table<string; int>; shape : string) : array<Tok> {
-    var out : array<Tok>
     var lx : FlexLexer
     lx.symbols := typedefs
     flex_open(lx, text)
+    var out : array<Tok>
     if (shape == "goto") {
-        while (c_next_goto(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_goto(l)
     } elif (shape == "flex-dgoto") {
-        while (c_next_dgoto(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_dgoto(l)
     } elif (shape == "flex-dtree") {
-        while (c_next_dtree(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_dtree(l)
     } elif (shape == "flex-call") {
-        while (c_next_call(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_call(l)
     } elif (shape == "table") {
-        while (c_next_table(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_table(l)
     } elif (shape == "reader") {
-        while (c_next_reader(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_reader(l)
     } elif (shape == "goto-dgoto") {
-        while (c_next_goto_dgoto(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_goto_dgoto(l)
     } else {
-        while (c_next(lx)) {
-            out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
-        }
+        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next(l)
     }
     if (lx.failed) {
         print("{lx.err}\n")

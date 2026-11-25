@@ -12,9 +12,22 @@ require daslib/debugger
 require daslib/stringify
 require daslib/strings_boost
 require strings
+require flex/flex
 
 //! whether the test file runs under the JIT
 def tier_is_jit() : bool => is_jit_function(@@tier_is_jit)
+
+//! opens `lx` on `src` as the file `t.txt` and returns every token `scan` takes, each through
+//! `project`
+def lex_tokens(var lx : FlexLexer; src : string; scan : block<(var lx : FlexLexer) : bool>;
+               project : block<(var lx : FlexLexer) : auto(TT)>) : array<TT -const -&> {
+    flex_open(lx, src, "t.txt")
+    var out : array<TT -const -&>
+    while (invoke(scan, lx)) {
+        out |> push(invoke(project, lx))
+    }
+    return <- out
+}
 
 //! compiles `text` as the virtual file `name` - for the JIT tier's choices when `jit_policy`,
 //! JIT-compiled when `jit` - and hands a program that compiled to `blk`: "" when it compiled and
