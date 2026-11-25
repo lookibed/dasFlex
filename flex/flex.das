@@ -132,14 +132,26 @@ def text_is(lx : FlexLexer; s : string) : bool {
     }
 }
 
+//! the byte length of the UTF-8 character at `pos`: its lead byte and that many continuation bytes
+//! (`0x80..0xBF`) in the input, 0 when the bytes there are not one
+def private utf8_char_len(lx : FlexLexer; pos : int) : int {
+    let b = int(unsafe(lx.data[pos]))
+    let n = b < 0x80 ? 1 : (b < 0xC2 ? 0 : (b < 0xE0 ? 2 : (b < 0xF0 ? 3 : (b < 0xF5 ? 4 : 0))))
+    return 0 if (n == 0 || pos + n > lx.len)
+    for (k in range(1, n)) {
+        return 0 if ((int(unsafe(lx.data[pos + k])) & 0xC0) != 0x80)
+    }
+    return n
+}
+
 //! The error text for the byte at the cursor that no rule accepts: the UTF-8 character there, or
 //! the byte when it is not one.
 def flex_error_text(lx : FlexLexer) : string {
     var shown = "end of input"
     if (lx.pos < lx.len) {
         let b = int(unsafe(lx.data[lx.pos]))
-        let seq_len = b < 128 ? 1 : (b >= 194 && b <= 223 ? 2 : (b >= 224 && b <= 239 ? 3 : (b >= 240 && b <= 244 ? 4 : 0)))
-        if (seq_len == 0 || lx.pos + seq_len > lx.len) {
+        let seq_len = utf8_char_len(lx, lx.pos)
+        if (seq_len == 0) {
             shown = "byte {b}"
         } elif (b < 32 || b == 127) {
             shown = "control byte {b}"

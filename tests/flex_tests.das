@@ -497,6 +497,17 @@ def test_error_position(t : T?) {
     t |> equal(lx.tok.line, 2)
 }
 
+[test(description = "a lead byte without its continuation bytes is reported as a byte, not as a character")]
+def test_error_bad_utf8(t : T?) {
+    for (src in ["a\xC3A", "a\xE2\x86", "a\xE2\x86A", "a\xF0\x9F\x98"]) {
+        var lx : FlexLexer
+        flex_open(lx, src, "t.txt")
+        while (mini(lx)) {
+        }
+        t |> equal(lx.err, "t.txt:1:2: unexpected byte {int(unsafe(lx.data[1]))}")
+    }
+}
+
 [test(description = "the goto-mode scanner yields the same tokens as the table-mode one")]
 def test_goto_mode_equivalence(t : T?) {
     let src = "if (x1 == 42) /* c * / */ y = iff; z-1"
