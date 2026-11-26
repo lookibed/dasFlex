@@ -151,7 +151,7 @@ def private fail_at(var spec : FlexSpec; msg : string; site : Expression const?)
 def private check_groups(var spec : FlexSpec; pattern : string; group_max : int;
                          site : Expression const?) {
     var re : Regex
-    return if (!regex_compile(re, flex_group_pattern(pattern)))
+    return if (!regex_compile(re, flex_group_pattern(flex_codepoints(pattern).text)))
     let ngroups = length(re.groups) - 1
     if (ngroups == 0) {
         fail_at(spec, "rule(\"{pattern}\"): group() asks for a capture group, the regex has none",
@@ -737,7 +737,7 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
     }
     for (arm in spec.arms) {
         continue if (empty(arm.group_re))
-        let pattern = spec.rules[arm.rule].pattern
+        let pattern = flex_codepoints(spec.rules[arm.rule].pattern).text
         return false if (!regex_global(arm.group_re, pattern, arm.site.at, errors))
     }
     func.body = make_scanner_body(spec, g, t, lx, shape.mode, shape.dispatch, shape.matcher,

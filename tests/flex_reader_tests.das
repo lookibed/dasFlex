@@ -54,6 +54,7 @@ WORD    [a-z]({D}|[a-z])*
 XY      x|y
 %rules
 {XY}z               { emit(WORD) }
+"\u00e9+\U0001F600"  { emit(LIT) }
 " "+
 %%
 
@@ -141,6 +142,12 @@ def test_quoted_and_regex(t : T?) {
                ["{int(RTok.WORD)}:a1", "{int(RTok.NUM)}:12", "t.txt:1:6: unexpected '3'"])
     t |> equal(stream("xz yz x", "alt"),
                ["{int(RTok.WORD)}:xz", "{int(RTok.WORD)}:yz", "t.txt:1:7: unexpected 'x'"])
+}
+
+[test(description = "inside a quoted pattern \\u and \\U name a code point, as in a regex, while the rest of the text stays literal")]
+def test_quoted_codepoint_escapes(t : T?) {
+    t |> equal(stream("é+😀", "alt"), ["{int(RTok.LIT)}:é+😀", ""])
+    t |> equal(stream("u00e9+", "alt"), ["t.txt:1:1: unexpected 'u'"])
 }
 
 [test(description = "emit, begin, an empty action, a brace-less and a multi-line action all run as daslang code")]

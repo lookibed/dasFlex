@@ -11,19 +11,21 @@ options indenting = 4
 //
 // `flex` (also `flex-inline`) is the default shape, the inline matcher with goto dispatch; the
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
-// `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`).
+// `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`). Every mode but `flex`
+// reaches its scanner through the function `c_scanner` returns, one indirect call per token more.
+// The `regex` mode is ASCII + `$` + UCN escapes: `daslib/regex` has no code-point escape, so an
+// identifier holding a UTF-8 character past ASCII, or a byte order mark later than offset 0, stops it.
 //
 //   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N [--count]) files...
 //   (`-- --help` lists the flags)
 
 require c_lexer
-require c_lexer_goto
-require c_lexer_reader
 require c_lexer_variants
 require daslib/regex
 require daslib/fio
 require daslib/clargs
 require daslib/strings_boost
+require daslib/utf8_utils
 require strings
 
 struct Tok {
@@ -32,21 +34,108 @@ struct Tok {
     line : int
 }
 
-def is_ident_start(c : int) : bool => is_alpha(c) || c == '_'
-def is_ident_char(c : int) : bool => is_alpha(c) || is_number(c) || c == '_'
+//! a lexer's tokens over a text, then the error text of the byte it stopped at: "" when it took the
+//! whole text
+struct Lexed {
+    toks : array<Tok>
+    err : string
+}
+
+def is_ident_start(c : int) : bool => is_alpha(c) || c == '_' || c == '$'
+def is_ident_char(c : int) : bool => is_alpha(c) || is_number(c) || c == '_' || c == '$'
+
+//! the byte length of the UTF-8 character past ASCII at `i`, 0 when there is none or it is an
+//! overlong form; a surrogate or a value past U+10FFFF is left to `c_ident_prefix`, which refuses both
+def utf8_len(d : array<uint8>#; i : int) : int {
+    let b = int(d[i])
+    let n = b >= 0xC2 && b <= 0xDF ? 2 : b >= 0xE0 && b <= 0xEF ? 3 : b >= 0xF0 && b <= 0xF4 ? 4 : 0
+    return 0 if (n == 0 || i + n > length(d))
+    let lo = int(b == 0xE0 ? 0xA0 : b == 0xF0 ? 0x90 : 0x80)
+    let second = int(d[i + 1])
+    return 0 if (second < lo || second > 0xBF)
+    for (k in range(2, n)) {
+        return 0 if ((int(d[i + k]) & 0xC0) != 0x80)
+    }
+    return n
+}
+
+//! the byte length of the universal character name at `i` (`\uHHHH`, `\UHHHHHHHH`), 0 when there is none
+def ucn_len(d : array<uint8>#; i : int) : int {
+    return 0 if (int(d[i]) != '\\' || i + 1 >= length(d))
+    let digits = int(d[i + 1]) == 'u' ? 4 : int(d[i + 1]) == 'U' ? 8 : 0
+    return 0 if (digits == 0 || i + 2 + digits > length(d))
+    for (k in range(digits)) {
+        return 0 if (!is_hex(int(d[i + 2 + k])))
+    }
+    return digits + 2
+}
+
+//! the bytes of the identifier character at `i` - ASCII, a UCN or UTF-8 past ASCII - 0 when none
+//! starts there; a digit only when `!first`
+def ident_unit(d : array<uint8>#; i : int; first : bool) : int {
+    let c = int(d[i])
+    if (c < 0x80 && c != '\\') {
+        return (first ? is_ident_start(c) : is_ident_char(c)) ? 1 : 0
+    }
+    return c == '\\' ? ucn_len(d, i) : utf8_len(d, i)
+}
+
+//! the byte length of the escape at `j` the literal rules take (`ES`): `\\` and one of `'"?\\abfnrtv`
+//! or an octal digit, `\\x` and a hex digit, or a UCN - the rest of an octal or hex run is plain text
+//! to the rule; 0 when none starts there
+def escape_len(d : array<uint8>#; j : int) : int {
+    return 0 if (j + 1 >= length(d))
+    let e = int(d[j + 1])
+    return 2 if (find("'\"?\\abfnrtv01234567", e) >= 0)
+    return 3 if (e == 'x' && j + 2 < length(d) && is_hex(int(d[j + 2])))
+    return ucn_len(d, j)
+}
+
+//! the byte length of the literal whose opening quote is at `i`, both quotes included, when the
+//! rules take it - closed on its line, every escape one `escape_len` takes, a character literal not
+//! empty - and 0 when they do not
+def literal_len(d : array<uint8>#; i : int) : int {
+    let quote = int(d[i])
+    var j = i + 1
+    while (j < length(d) && int(d[j]) != quote) {
+        return 0 if (int(d[j]) == '\n')
+        let step = int(d[j]) == '\\' ? escape_len(d, j) : 1
+        return 0 if (step == 0)
+        j += step
+    }
+    return 0 if (j >= length(d) || (quote == '\'' && j == i + 1))
+    return j + 1 - i
+}
+
+//! the runtime's error text for the byte at `at` no rule takes
+def probe_error(text : string; at, line, col : int) : string {
+    var lx : FlexLexer
+    flex_open(lx, text)
+    lx.pos = at
+    lx.line = line
+    lx.col = col
+    return flex_error_text(lx)
+}
+
+let PUNCT1 = ";\{\},:=()[].&!~-+*/%<>^|?"
 
 //! the probe's hand-written lexer: raw tokens, no filter (keywords by table, typedef names by `typedefs`)
-def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // nolint:STYLE038 - the probe's lexer kept whole, as the reference
-    var out : array<Tok>
+def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint:STYLE038 - the probe's lexer kept whole, as the reference
+    var res : Lexed
     var line = 1
+    var line_start = 0
     peek_data(text) $(d) {  // nolint:STYLE037 - see the function
         let n = length(d)
         var i = 0
+        if (contains_utf8_bom(text)) {
+            i = 3
+        }
         while (i < n) {
             let c = int(d[i])
             if (c == '\n') {
                 line++
                 i++
+                line_start = i
                 continue
             }
             if (c == ' ' || c == '\t' || c == '\r' || c == '\f' || c == '\v') {
@@ -64,6 +153,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                 while (i + 1 < n && !(int(d[i]) == '*' && int(d[i + 1]) == '/')) {
                     if (int(d[i]) == '\n') {
                         line++
+                        line_start = i + 1
                     }
                     i++
                 }
@@ -77,9 +167,42 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                 continue
             }
             let start = i
-            if (is_ident_start(c)) {
-                while (i < n && is_ident_char(int(d[i]))) {
-                    i++
+            let u8_string = c == 'u' && i + 2 < n && int(d[i + 1]) == '8' && int(d[i + 2]) == '"'
+            let one_prefix = ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n
+                              && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))
+            let prefix = u8_string ? 2 : one_prefix ? 1 : 0
+            if (c == '"' || c == '\'' || prefix > 0) {
+                // a literal the rules refuse fails at its quote; a prefix before it is an identifier
+                let len = literal_len(d, start + prefix)
+                if (len > 0) {
+                    let quote = int(d[start + prefix])
+                    i = start + prefix + len
+                    res.toks |> emplace(
+                                   Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
+                                       text = slice(d, start, i), line = line))
+                    continue
+                }
+                if (prefix == 0) {
+                    res.err = probe_error(text, i, line, i - line_start + 1)
+                    break
+                }
+            }
+            if (ident_unit(d, i, true) > 0) {
+                var ascii = true
+                while (i < n) {
+                    if (is_ident_char(int(d[i]))) {
+                        i++
+                        continue
+                    }
+                    let unit = ident_unit(d, i, i == start)
+                    break if (unit == 0)
+                    ascii = false
+                    i += unit
+                }
+                i = ascii ? i : start + c_ident_prefix(d, start, i)
+                if (i == start) {
+                    res.err = probe_error(text, start, line, start - line_start + 1)
+                    break
                 }
                 let word = slice(d, start, i)
                 var kind = int(CTok.IDENTIFIER)
@@ -89,7 +212,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                 if (kind == int(CTok.IDENTIFIER) && typedefs |> key_exists(word)) {
                     kind = int(CTok.TYPEDEF_NAME)
                 }
-                out |> emplace(Tok(kind = kind, text = word, line = line))
+                res.toks |> emplace(Tok(kind = kind, text = word, line = line))
                 continue
             }
             if (is_number(c) || (c == '.' && i + 1 < n && is_number(int(d[i + 1])))) {
@@ -112,29 +235,9 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                     }
                 }
                 let word = slice(d, start, i)
-                out |> emplace(
+                res.toks |> emplace(
                                Tok(kind = int(is_float ? CTok.F_CONSTANT : CTok.I_CONSTANT),
                                    text = word, line = line))
-                continue
-            }
-            if (c == '"' || c == '\''
-                || ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n
-                    && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))) {
-                if (c != '"' && c != '\'') {
-                    i++
-                }
-                let quote = int(d[i])
-                i++
-                while (i < n && int(d[i]) != quote) {
-                    if (int(d[i]) == '\\') {
-                        i++
-                    }
-                    i++
-                }
-                i++
-                out |> emplace(
-                               Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
-                                   text = slice(d, start, i), line = line))
                 continue
             }
             if (i + 2 < n) {
@@ -144,7 +247,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                     p3 = int(v)
                 }
                 if (p3 >= 0) {
-                    out |> emplace(Tok(kind = p3, text = s3, line = line))
+                    res.toks |> emplace(Tok(kind = p3, text = s3, line = line))
                     i += 3
                     continue
                 }
@@ -156,16 +259,20 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
                     p2 = int(v)
                 }
                 if (p2 >= 0) {
-                    out |> emplace(Tok(kind = p2, text = s2, line = line))
+                    res.toks |> emplace(Tok(kind = p2, text = s2, line = line))
                     i += 2
                     continue
                 }
             }
-            out |> emplace(Tok(kind = c, text = slice(d, i, i + 1), line = line))
+            if (find(PUNCT1, c) < 0) {
+                res.err = probe_error(text, i, line, i - line_start + 1)
+                break
+            }
+            res.toks |> emplace(Tok(kind = c, text = slice(d, i, i + 1), line = line))
             i++
         }
     }
-    return <- out
+    return <- res
 }
 
 let PUNCT3 <- { "..." => CTok.ELLIPSIS, ">>=" => CTok.RIGHT_ASSIGN, "<<=" => CTok.LEFT_ASSIGN }
@@ -187,32 +294,19 @@ def flex_tokens(var lx : FlexLexer; scan : block<(var lx : FlexLexer) : bool>) :
 }
 
 //! the dasFlex lexer in one of its generated shapes: raw tokens
-def lex_flex(text : string; typedefs : table<string; int>; shape : string) : array<Tok> {
+def lex_flex(text : string; typedefs : table<string; int>; shape : string) : Lexed {
     var lx : FlexLexer
     lx.symbols := typedefs
-    flex_open(lx, text)
-    var out : array<Tok>
-    if (shape == "goto") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_goto(l)
-    } elif (shape == "flex-dgoto") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_dgoto(l)
-    } elif (shape == "flex-dtree") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_dtree(l)
-    } elif (shape == "flex-call") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_call(l)
-    } elif (shape == "table") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_table(l)
-    } elif (shape == "reader") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_reader(l)
-    } elif (shape == "goto-dgoto") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_goto_dgoto(l)
+    c_open(lx, text)
+    var res : Lexed
+    if (shape == "flex" || shape == "flex-inline") {
+        res.toks <- flex_tokens(lx) $(var l : FlexLexer) => c_next(l)
     } else {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next(l)
+        let scan = c_scanner(shape)
+        res.toks <- flex_tokens(lx) $(var l : FlexLexer) => invoke(scan, l)
     }
-    if (lx.failed) {
-        print("{lx.err}\n")
-    }
-    return <- out
+    res.err = lx.failed ? lx.err : ""
+    return <- res
 }
 
 //! `daslib/regex` rule by rule at the cursor: longest match, the first rule on a tie
@@ -231,7 +325,7 @@ def regex_rules() : array<ReRule> {
                   ["#[^\n]*", "-1"],
                   ["//[^\n]*", "-1"],
                   ["/\\*", "-4"],
-                  ["[a-zA-Z_][a-zA-Z_0-9]*", "-2"],
+                  ["(?:[a-zA-Z_$]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})(?:[a-zA-Z_$0-9]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})*", "-2"],
                   ["0[xX][a-fA-F0-9]+", "{int(CTok.I_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+(ull|uLL|Ull|ULL|llu|llU|LLu|LLU|ul|uL|Ul|UL|lu|lU|Lu|LU|ll|LL|u|U|l|L)", "{int(CTok.I_CONSTANT)}"],
                   ["[1-9][0-9]*", "{int(CTok.I_CONSTANT)}"],
@@ -239,7 +333,7 @@ def regex_rules() : array<ReRule> {
                   ["0[0-7]*", "{int(CTok.I_CONSTANT)}"],
                   ["0[0-7]*(ull|uLL|Ull|ULL|llu|llU|LLu|LLU|ul|uL|Ul|UL|lu|lU|Lu|LU|ll|LL|u|U|l|L)",
                    "{int(CTok.I_CONSTANT)}"],
-                  ["(u|U|L)?'([^'\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'",
+                  ["(u|U|L)?'([^'\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))+'",
                    "{int(CTok.I_CONSTANT)}"],
                   ["[0-9]+([Ee][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
                   ["[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
@@ -258,7 +352,7 @@ def regex_rules() : array<ReRule> {
                    "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
-                  ["(u8|u|U|L)?\"([^\"\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"",
+                  ["(u8|u|U|L)?\"([^\"\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))*\"",
                    "{int(CTok.STRING_LITERAL)}"],
                   ["\\.\\.\\.", "{int(CTok.ELLIPSIS)}"],
                   [">>=", "{int(CTok.RIGHT_ASSIGN)}"],
@@ -296,10 +390,11 @@ def regex_rules() : array<ReRule> {
 }
 
 def lex_regex(text : string; typedefs : table<string; int>;
-              var rules : array<ReRule>) : array<Tok> {
-    var out : array<Tok>
-    var pos = 0
+              var rules : array<ReRule>) : Lexed {
+    var res : Lexed
+    var pos = contains_utf8_bom(text) ? 3 : 0
     var line = 1
+    var line_start = 0
     peek_data(text) $(d) {
         let n = length(d)
         while (pos < n) {
@@ -312,22 +407,28 @@ def lex_regex(text : string; typedefs : table<string; int>;
                     best = ri
                 }
             }
+            let kind = best < 0 ? 0 : rules[best].kind
+            if (kind == -2 && best_end > pos) {
+                // an identifier holding a UCN ends before the first character Annex D does not allow there
+                best_end = pos + c_ident_prefix(d, pos, best_end)
+            }
             if (best < 0 || best_end <= pos) {
-                print("regex lexer: no rule at {pos} line {line}\n")
+                res.err = probe_error(text, pos, line, pos - line_start + 1)
                 break
             }
             for (p in range(pos, best_end)) {
                 if (int(d[p]) == '\n') {
                     line++
+                    line_start = p + 1
                 }
             }
-            let kind = rules[best].kind
             if (kind == -4) {
                 // a comment: skip to the closing */
                 var p = best_end
                 while (p + 1 < n && !(int(d[p]) == '*' && int(d[p + 1]) == '/')) {
                     if (int(d[p]) == '\n') {
                         line++
+                        line_start = p + 1
                     }
                     p++
                 }
@@ -343,10 +444,10 @@ def lex_regex(text : string; typedefs : table<string; int>;
             } elif (kind == -3) {
                 k = int(d[start])
             }
-            out |> emplace(Tok(kind = k, text = slice(d, start, best_end), line = line))
+            res.toks |> emplace(Tok(kind = k, text = slice(d, start, best_end), line = line))
         }
     }
-    return <- out
+    return <- res
 }
 
 //! the shared filter: GNU extensions skipped, adjacent string literals joined, typedef names learned.
@@ -426,15 +527,15 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
     return <- out
 }
 
+//! the tokens of the lexer `mode` names; its error text, when it stopped, printed
 def lex_mode(mode : string; text : string; typedefs : table<string; int>;
              var rules : array<ReRule>) : array<Tok> {
-    if (mode == "probe") {
-        return <- lex_probe(text, typedefs)
-    } elif (mode == "regex") {
-        return <- lex_regex(text, typedefs, rules)
-    } else {
-        return <- lex_flex(text, typedefs, mode)
+    var res <- (mode == "probe" ? lex_probe(text, typedefs)
+        : mode == "regex" ? lex_regex(text, typedefs, rules) : lex_flex(text, typedefs, mode))
+    if (!empty(res.err)) {
+        print("{res.err}\n")
     }
+    return <- res.toks
 }
 
 //! the default shape's scanner alone, `passes` times: the lexer is opened outside the timer, the loop counts tokens

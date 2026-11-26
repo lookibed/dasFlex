@@ -5,7 +5,6 @@ options strict_smart_pointers = true
 module flex_dfa shared public
 
 require flex/flex_regex
-require daslib/strings_boost
 
 // The NFA to tables: byte equivalence classes from every edge boundary, subset construction over
 // epsilon closures, one DFA start state per start condition, and the rule an accepting state carries -
@@ -49,16 +48,17 @@ def byte_classes(n : Nfa; var class_of : array<int>) : int {
     return cls + 1
 }
 
-def private eps_closure(n : Nfa; var states : array<int>) {
-    var seen : table<int>
+//! `states` grown by every state an epsilon path reaches, then sorted; `seen[s] == stamp` marks a
+//! state already in, so each call takes a fresh `stamp`
+def private eps_closure(n : Nfa; var seen : array<int>; stamp : int; var states : array<int>) {
     for (s in states) {
-        seen |> insert(s)
+        seen[s] = stamp
     }
     var i = 0
     while (i < length(states)) {
         for (t in n.eps[states[i]]) {
-            if (!(seen |> key_exists(t))) {
-                seen |> insert(t)
+            if (seen[t] != stamp) {
+                seen[t] = stamp
                 states |> push(t)
             }
         }
@@ -67,18 +67,74 @@ def private eps_closure(n : Nfa; var states : array<int>) {
     sort(states)
 }
 
-def private set_key(states : array<int>) : string => join(states, ",")
+//! interned sorted NFA state sets, numbered in the order they were added: `head[h]` is the newest
+//! set whose hash is `h`, `chain[id]` the set added before it with the same hash
+struct SetIndex {
+    sets : array<array<int>>
+    head : table<uint64; int>
+    chain : array<int>
+}
 
-//! the index of the DFA state for the NFA state set `st`, added to `sets` when it is new
-def private intern_set(var sets : array<array<int>>; var index : table<string; int>;
-                       var st : array<int>) : int {
-    let key = set_key(st)
-    var at = index?[key] ?? -1
-    if (at < 0) {
-        at = length(sets)
-        index[key] = at
-        sets |> emplace(st)
+def private set_hash(st : array<int>) : uint64 {
+    var h = 14695981039346656037ul
+    for (s in st) {
+        h = (h ^ uint64(s)) * 1099511628211ul
     }
+    return h
+}
+
+def private same_set(a, b : array<int>) : bool {
+    return false if (length(a) != length(b))
+    for (x, y in a, b) {
+        return false if (x != y)
+    }
+    return true
+}
+
+//! the number of `st` in `idx`, or -1
+def find_set(idx : SetIndex; st : array<int>; h : uint64) : int {
+    var at = idx.head?[h] ?? -1
+    while (at >= 0 && !same_set(idx.sets[at], st)) {
+        at = idx.chain[at]
+    }
+    return at
+}
+
+//! the number of the new set `st`, moved into `idx`
+def add_set(var idx : SetIndex; var st : array<int>; h : uint64) : int {
+    let at = length(idx.sets)
+    idx.chain |> push(idx.head?[h] ?? -1)
+    idx.head[h] = at
+    idx.sets |> emplace(st)
+    return at
+}
+
+//! subset construction's state sets: a DFA state is the epsilon closure of a kernel, the NFA states
+//! one class moves to, so a kernel met again maps to its DFA state without a second closure
+struct private Subsets {
+    states : SetIndex
+    kernels : SetIndex
+    kernel_state : array<int>   //!< per kernel: its DFA state
+    seen : array<int>
+    stamp : int
+}
+
+//! the DFA state of `kernel`, added when its closure is new
+def private intern_kernel(n : Nfa; var sb : Subsets; kernel : array<int>) : int {
+    let kh = set_hash(kernel)
+    let k = find_set(sb.kernels, kernel, kh)
+    return sb.kernel_state[k] if (k >= 0)
+    var inscope st := kernel
+    sb.stamp++
+    eps_closure(n, sb.seen, sb.stamp, st)
+    let h = set_hash(st)
+    var at = find_set(sb.states, st, h)
+    if (at < 0) {
+        at = add_set(sb.states, st, h)
+    }
+    var inscope kept := kernel
+    add_set(sb.kernels, kept, kh)
+    sb.kernel_state |> push(at)
     return at
 }
 
@@ -104,57 +160,65 @@ def class_bounds(t : FlexTables) : ClassBounds {
 }
 
 //! Subset construction. The result's `err` and `err_rule` repeat the NFA's.
+[arch(at="../ARCHITECTURE.md#one-automaton")]
 def build_tables(n : Nfa) : FlexTables {
     var t = FlexTables(err = n.err, err_rule = n.err_rule)
     return <- t if (!empty(n.err))
     t.nclasses = byte_classes(n, t.class_of)
-    let bounds <- class_bounds(t)
-    var sets : array<array<int>>
-    var index : table<string; int>
+    var sb : Subsets
+    sb.seen |> resize(length(n.accept))
+    for (s in range(length(n.accept))) {
+        sb.seen[s] = -1
+    }
     t.start |> resize(length(n.starts))
     for (c, s0 in count(), n.starts) {
-        var st : array<int>
-        st |> push(s0)
-        eps_closure(n, st)
-        t.start[c] = intern_set(sets, index, st)
+        var inscope kernel <- [s0]
+        t.start[c] = intern_kernel(n, sb, kernel)
     }
+    var moves : array<array<int>>
+    moves |> resize(t.nclasses)
     var si = 0
-    while (si < length(sets)) {
+    while (si < length(sb.states.sets)) {
         var acc = -1
-        for (s in sets[si]) {
+        for (s in sb.states.sets[si]) {
+            for (e in n.edges[s]) {
+                for (cls in range(t.class_of[e.lo], t.class_of[e.hi] + 1)) {
+                    moves[cls] |> push(e.to)  // nolint:PERF006 - the per-class lists keep their capacity from state to state
+                }
+            }
             if (n.accept[s] >= 0 && (acc < 0 || n.accept[s] < acc)) {
                 acc = n.accept[s]
             }
         }
         t.accept |> push(acc)
-        for (cls in range(t.nclasses)) {
-            let b = bounds.lo[cls]
-            var inscope moved : array<int>
-            var inscope seen : table<int>
-            for (s in sets[si]) {
-                for (e in n.edges[s]) {
-                    if (b >= e.lo && b <= e.hi && !(seen |> key_exists(e.to))) {
-                        seen |> insert(e.to)
-                        moved |> push(e.to)
-                    }
-                }
-            }
-            if (empty(moved)) {
+        for (m in moves) {
+            if (empty(m)) {
                 t.next |> push(-1)
                 continue
             }
-            eps_closure(n, moved)
-            t.next |> push(intern_set(sets, index, moved))
+            sort(m)
+            var w = 1
+            for (i in range(1, length(m))) {
+                if (m[i] != m[w - 1]) {
+                    m[w] = m[i]
+                    w++
+                }
+            }
+            m |> resize(w)
+            t.next |> push(intern_kernel(n, sb, m))
+            m |> clear()
         }
         si++
     }
-    t.nstates = length(sets)
+    t.nstates = length(sb.states.sets)
     return <- t
 }
 
-//! the states moving to `to` on class `c` are `from[at[c * n + to]] .. from[at[c * n + to + 1] - 1]`
+//! the moves into state `to` are `at[to] .. at[to + 1] - 1`: move `i` leads from `from[i]` on class
+//! `cls[i]`
 struct private Preimage {
     at : array<int>
+    cls : array<int>
     from : array<int>
 }
 
@@ -179,28 +243,35 @@ def private move_of(t : FlexTables; s, c : int) : int {
 def private preimage(t : FlexTables) : Preimage {
     let n = t.nstates + 1
     var p : Preimage
-    p.at |> resize(t.nclasses * n + 1)
+    var target : array<int>
+    target |> resize(n * t.nclasses)
+    p.at |> resize(n + 1)
     for (s in range(n)) {
         for (c in range(t.nclasses)) {
-            p.at[c * n + move_of(t, s, c) + 1]++
+            let to = move_of(t, s, c)
+            target[s * t.nclasses + c] = to
+            p.at[to + 1]++
         }
     }
     for (i in range(1, length(p.at))) {
         p.at[i] += p.at[i - 1]
     }
     var fill := p.at
+    p.cls |> resize(n * t.nclasses)
     p.from |> resize(n * t.nclasses)
     for (s in range(n)) {
         for (c in range(t.nclasses)) {
-            let k = c * n + move_of(t, s, c)
-            p.from[fill[k]] = s
-            fill[k]++
+            let to = target[s * t.nclasses + c]
+            p.cls[fill[to]] = c
+            p.from[fill[to]] = s
+            fill[to]++
         }
     }
     return <- p
 }
 
-//! one block per `accept` value, the dead state alone; every block starts on the work list
+//! one block per `accept` value, the dead state alone; every block but the dead state's starts on
+//! the work list
 def private initial_partition(t : FlexTables) : Partition {
     let n = t.nstates + 1
     var p : Partition
@@ -239,6 +310,7 @@ def private initial_partition(t : FlexTables) : Partition {
     p.in_work |> resize(nblocks)
     p.work |> reserve(n)
     for (b in range(nblocks)) {
+        continue if (b == p.blk[t.nstates])
         p.work |> push(b)
         p.in_work[b] = true
     }
@@ -285,29 +357,38 @@ def private split_touched(var p : Partition; var touched : array<int>) {
 }
 
 //! Hopcroft's refinement: the block of every state, the dead state (`nstates`) included
+[arch(at="../ARCHITECTURE.md#one-automaton")]
 def private refine(t : FlexTables) : array<int> {
     let n = t.nstates + 1
     let pre <- preimage(t)
     var p <- initial_partition(t)
-    var splitter, touched : array<int>
-    splitter |> reserve(n)
+    var by_class : array<array<int>>
+    by_class |> resize(t.nclasses)
+    var classes, touched : array<int>
+    classes |> reserve(t.nclasses)
     touched |> reserve(n)
     while (!empty(p.work)) {
         let a = p.work[length(p.work) - 1]
         p.work |> pop()
         p.in_work[a] = false
-        splitter |> clear()
         for (i in range(p.bstart[a], p.bend[a])) {
-            splitter |> push(p.elems[i])
-        }
-        for (c in range(t.nclasses)) {
-            for (to in splitter) {
-                for (i in range(pre.at[c * n + to], pre.at[c * n + to + 1])) {
-                    mark(p, touched, pre.from[i])
+            let to = p.elems[i]
+            for (j in range(pre.at[to], pre.at[to + 1])) {
+                let c = pre.cls[j]
+                if (empty(by_class[c])) {
+                    classes |> push(c)
                 }
+                by_class[c] |> push(pre.from[j])  // nolint:PERF006 - the per-class lists keep their capacity from splitter to splitter
+            }
+        }
+        for (c in classes) {
+            for (s in by_class[c]) {
+                mark(p, touched, s)
             }
             split_touched(p, touched)
+            by_class[c] |> clear()
         }
+        classes |> clear()
     }
     return <- p.blk
 }

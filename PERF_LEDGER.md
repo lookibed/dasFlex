@@ -60,6 +60,79 @@ FINAL = 4c0c30a. Step 10: A = b18ebd2, B = 58f9d63 (A/B order flipped every roun
 token-array `--mode flex` of the table above; in steps 0-5 and for BASE the mode name `flex` meant the call matcher with the
 `if` chain, the shape `flex-call` names since step 6.
 
+## Unicode in the C lexer
+
+What the Annex D identifier rules, `$`, the UCN escapes and the extended identifier rule cost
+against the ASCII rules: before = `main` (f2a6bd0), after = the `unicode` branch, the same driver in
+both. One run, alone on a quiet machine (cpu busy 1%), daslang 0.6.6; each cell is the median of 3
+rounds, the two trees in alternating order, every round one process per tree, tier, driver and
+file, each process the median of 9 passes (5 for the build). The build row is `flex_tables` over the
+rules of `c_next` read from `c_lexer.das` (subset construction and minimization, no macro and no code
+emission), called from a driver program; the `[flex]` annotation runs it once per scanner when the
+module compiles. The scan rows are `c_lex_compare.das` as in the table above. Ms; the round range
+stays within 3% of the cell except interp token-array wasm3_m3_parse after (22%, one round) and JIT
+token-array wasm3_m3_parse before (17%, one round).
+
+| measure | interp before | interp after | jit before | jit after |
+|---|---|---|---|---|
+| DFA: states x byte classes (merged-table entries) | 115 x 74 (8 510) | 177 x 143 (25 311) | same | same |
+| table build of `c_next` (`flex_tables`) | 11.006 | 401.312 (36x) | 3.393 | 210.683 (62x) |
+| count only, doom_am_map.i | 10.253 | 10.399 (+1%) | 0.662 | 0.679 (+3%) |
+| count only, doom_p_mobj.i | 8.784 | 8.799 (0%) | 0.577 | 0.601 (+4%) |
+| count only, wasm3_m3_parse.i | 10.520 | 10.651 (+1%) | 0.670 | 0.695 (+4%) |
+| token array, doom_am_map.i | 12.011 | 12.317 (+3%) | 0.916 | 0.931 (+2%) |
+| token array, doom_p_mobj.i | 10.001 | 10.211 (+2%) | 0.739 | 0.765 (+4%) |
+| token array, wasm3_m3_parse.i | 12.146 | 12.440 (+2%) | 0.952 | 0.931 (-2%) |
+
+The cost is the build, not the scan: the Annex D code-point sets cut the lead and continuation bytes
+into 143 byte classes (74 for the ASCII rules) and add the states of their UTF-8 byte sequences, so
+subset construction and minimization walk about three times the table, while an ASCII input still
+takes one class lookup and one move per byte - the scan stays within 4% in both tiers. Every
+`[flex]` scanner of these rules pays the build once at compile time, and `c_lex_compare.das`
+compiles eight of them.
+
+### The table build, made algorithmic
+
+The 36x was not the table: one epsilon closure ran per (DFA state, class) move with a `table<int>`
+for its marks and every state set was joined into a string key, over an NFA with one alternative per
+UTF-8 byte sequence. Five changes, each its own commit, took the build back below the ASCII rules'
+old cost:
+
+- subset construction reads a state's moves on every class in one pass over its NFA edges and
+  interns the kernel by a hash of its sorted states, so a kernel met again skips its closure - 722
+  closures instead of 30 005 for the Unicode C rules (470 -> 47 ms interp, indicative);
+- the UTF-8 sequences of a code-point set join a trie sharing their prefixes (NFA 2 201 -> 1 917
+  states, -7%, indicative);
+- Hopcroft's work list starts without the dead state's block, which has the largest preimage (21 674
+  of the 25 311 moves of the minimal table go to -1; minimization -29%, indicative);
+- a Hopcroft splitter reads its incoming moves grouped by target state and splits only on the classes
+  among them, instead of walking every class for every state (minimization -21%, indicative);
+- trie siblings with the same tail share one byte set, so the lead bytes of one shape lead into one
+  NFA path: NFA 1 917 -> 1 313 states, DFA before minimization 722 -> 462, and F1/F2 one class, so
+  the minimal table is 177 x 142 (34 -> 21 ms interp, indicative).
+
+The tables of the pre-Unicode rules are byte-identical, the Unicode tables differ only by that one
+merged class, and `c_lex_compare --dump` is identical in all ten modes, both tiers, over the five
+inputs and the 43 case inputs. Before = 6e35a9c (the `unicode` head these changes start from), after
+= 6d61381; one run alone on a quiet machine (cpu busy 2%), daslang 0.6.6, the same driver as above
+(9 passes per process, 3 rounds, tree order alternating), JIT `-jit -jit-no-cache`. Ms; the round
+range stays within 3% of the cell except JIT after for the pre-Unicode rules (13%).
+
+| measure | interp before | interp after | jit before | jit after |
+|---|---|---|---|---|
+| DFA of `c_next`, states x byte classes | 177 x 143 | 177 x 142 | same | same |
+| table build of `c_next`, Unicode rules | 407.147 | 19.854 (20.5x faster) | 213.083 | 3.646 (58x faster) |
+| table build of `c_next`, pre-Unicode rules (`main`) | 11.045 | 4.686 (2.4x faster) | 3.336 | 0.672 (5.0x faster) |
+| count only, doom_am_map.i | 10.293 | 10.138 (-2%) | 0.683 | 0.683 (0%) |
+| count only, doom_p_mobj.i | 8.657 | 8.835 (+2%) | 0.602 | 0.607 (+1%) |
+| count only, wasm3_m3_parse.i | 10.563 | 10.482 (-1%) | 0.701 | 0.691 (-1%) |
+
+The Unicode build now costs 1.8x the pre-Unicode build of the old code (19.9 against 11.0 ms
+interp), and the scan rows stay within 2%. The front-end module cache hides the build entirely on a
+warm compile: it stores the post-macro module - the scanner's rewritten body and the table globals -
+so a warm run of `c_lexer_demo.das` deserializes the lexer module and never calls `flex_tables`; a
+compile without a cache pays it once per `[flex]` scanner.
+
 ## What the JIT IR says (LLVM 22, `--jit-dump`)
 - the rule dispatch is already a `switch` in both shapes, so the dispatch step is an interpreter step only;
 - the matcher loop does 9 loads and 3 bounds checks per byte (`class_of`, `next`, `accept` each reload their

@@ -78,7 +78,8 @@ def private write_literal(var w : StringBuilderWriter; ch : int) {
 }
 
 //! the inside of a flex `"..."`, the opening quote consumed: every character literal, `\"`, `\\`
-//! and the control escapes (`\n`, `\t`, ...) as in a string
+//! and the control escapes (`\n`, `\t`, ...) as in a string, and the code-point escapes `\uHHHH`
+//! and `\UHHHHHHHH` as in a regex
 def private quoted(var s : RScan; var w : StringBuilderWriter) {
     while (true) {
         let c = peek(s)
@@ -94,7 +95,7 @@ def private quoted(var s : RScan; var w : StringBuilderWriter) {
         }
         let e = peek(s)
         s.pos++
-        if (e == 'n' || e == 't' || e == 'r' || e == 'f' || e == 'v') {
+        if (e == 'n' || e == 't' || e == 'r' || e == 'f' || e == 'v' || e == 'u' || e == 'U') {
             w |> write_char('\\')
             w |> write_char(e)
         } elif (e < 0 || e == '\n') {
