@@ -43,6 +43,11 @@ match - a pass for line and column - is a defect** - they count newlines on the 
 **A diff that allocates a string in the generated scanner loop before a rule body asks for one
 (`text`) is a defect** - the match is a span; the string is on request.
 
+**A diff that makes `intern` build a string or allocate on a hit, that lets `flex_open` replace the
+input while the lexer's symbols still point into it, or that leaves in `tok.sym` a symbol no rule
+interned for the token, is a defect** - a symbol is found by its bytes and its string is built on
+request (`ARCHITECTURE.md#symbols`).
+
 **A diff that changes `examples/c_lexer/c_lexer.das` so that its token stream over a preprocessed C
 file differs from the hand-written lexer in `c_lex_compare.das` (`--mode probe`) is a defect** - run
 both with `--dump` and diff.

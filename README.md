@@ -107,6 +107,13 @@ is the ledger's "Unicode in the C lexer". The C lexer in `examples/c_lexer` does
 `##` tokens, or chibicc's `has_space` / `at_bol` flags. Method and the step-by-step history:
 `PERF_LEDGER.md`.
 
+The table predates identifiers as symbols: the identifier rule now interns the token's bytes and
+emits its symbol's kind, so neither the scan nor the token array builds a string per identifier
+(7 009 string allocations per count-only pass of doom_am_map.i before, none after). Under the JIT
+that takes 23-29% off the count-only rows and 17-24% off the token-array rows; under the
+interpreter, where the interner's hash and probe are daslang code in place of three native calls,
+the same rows take 14-22% and 11-19% longer (ledger: "Identifiers as symbols").
+
 Install: `daspkg install github.com/lookibed/dasFlex`, then `require flex/flex_macro`.
 Run the tests from a daslang checkout: `daslang -load_module <dasFlex> dastest/dastest.das -- --test <dasFlex>/tests`.
 Design and the rules a change must keep: `ARCHITECTURE.md`, `REVIEW.md`. A JSON lexer walk-through:
