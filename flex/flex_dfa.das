@@ -214,9 +214,11 @@ def build_tables(n : Nfa) : FlexTables {
     return <- t
 }
 
-//! the states moving to `to` on class `c` are `from[at[c * n + to]] .. from[at[c * n + to + 1] - 1]`
+//! the moves into state `to` are `at[to] .. at[to + 1] - 1`: move `i` leads from `from[i]` on class
+//! `cls[i]`
 struct private Preimage {
     at : array<int>
+    cls : array<int>
     from : array<int>
 }
 
@@ -241,22 +243,28 @@ def private move_of(t : FlexTables; s, c : int) : int {
 def private preimage(t : FlexTables) : Preimage {
     let n = t.nstates + 1
     var p : Preimage
-    p.at |> resize(t.nclasses * n + 1)
+    var target : array<int>
+    target |> resize(n * t.nclasses)
+    p.at |> resize(n + 1)
     for (s in range(n)) {
         for (c in range(t.nclasses)) {
-            p.at[c * n + move_of(t, s, c) + 1]++
+            let to = move_of(t, s, c)
+            target[s * t.nclasses + c] = to
+            p.at[to + 1]++
         }
     }
     for (i in range(1, length(p.at))) {
         p.at[i] += p.at[i - 1]
     }
     var fill := p.at
+    p.cls |> resize(n * t.nclasses)
     p.from |> resize(n * t.nclasses)
     for (s in range(n)) {
         for (c in range(t.nclasses)) {
-            let k = c * n + move_of(t, s, c)
-            p.from[fill[k]] = s
-            fill[k]++
+            let to = target[s * t.nclasses + c]
+            p.cls[fill[to]] = c
+            p.from[fill[to]] = s
+            fill[to]++
         }
     }
     return <- p
@@ -348,30 +356,40 @@ def private split_touched(var p : Partition; var touched : array<int>) {
     touched |> clear()
 }
 
-//! Hopcroft's refinement: the block of every state, the dead state (`nstates`) included
+//! Hopcroft's refinement: the block of every state, the dead state (`nstates`) included. A splitter's
+//! incoming moves are sorted by class in one pass over its states, so a class no move into it reads
+//! costs nothing.
 def private refine(t : FlexTables) : array<int> {
     let n = t.nstates + 1
     let pre <- preimage(t)
     var p <- initial_partition(t)
-    var splitter, touched : array<int>
-    splitter |> reserve(n)
+    var by_class : array<array<int>>
+    by_class |> resize(t.nclasses)
+    var classes, touched : array<int>
+    classes |> reserve(t.nclasses)
     touched |> reserve(n)
     while (!empty(p.work)) {
         let a = p.work[length(p.work) - 1]
         p.work |> pop()
         p.in_work[a] = false
-        splitter |> clear()
         for (i in range(p.bstart[a], p.bend[a])) {
-            splitter |> push(p.elems[i])
-        }
-        for (c in range(t.nclasses)) {
-            for (to in splitter) {
-                for (i in range(pre.at[c * n + to], pre.at[c * n + to + 1])) {
-                    mark(p, touched, pre.from[i])
+            let to = p.elems[i]
+            for (j in range(pre.at[to], pre.at[to + 1])) {
+                let c = pre.cls[j]
+                if (empty(by_class[c])) {
+                    classes |> push(c)
                 }
+                by_class[c] |> push(pre.from[j])  // nolint:PERF006 - the per-class lists keep their capacity from splitter to splitter
+            }
+        }
+        for (c in classes) {
+            for (s in by_class[c]) {
+                mark(p, touched, s)
             }
             split_touched(p, touched)
+            by_class[c] |> clear()
         }
+        classes |> clear()
     }
     return <- p.blk
 }
