@@ -53,7 +53,7 @@ separate columns; a step that gave nothing stays in the table.
 | 8 dispatch by tier | under JIT the goto shape with the `if` chain beats goto mode with computed-goto dispatch (the step-7 JIT default) by 6-14% (default/`goto` 1.06-1.14x, jit-split and jit-mono, three files; measured with step 7), because LLVM already turns the chain into a `switch` and the computed goto adds a `switch` over label indices; table mode keeps computed-goto dispatch (step 1: -25% interp). The default `dispatch` now goes with the mode: `goto` for table, `if` for goto; an explicit `dispatch =` overrides | no change by design, table mode unchanged: 10.754 -> 10.743 ms (0%); V7 flex -> V8 flex | 1.177 -> 1.048 ms (-11%; V7 round range 0.980-1.181); doom_p_mobj -16%, wasm3_m3_parse -10% | kept: token streams identical on every version, shape and tier; the JIT default now runs with the `goto` shape (V8 flex 1.048, `goto` 1.079) |
 | 9 DFA minimization | subset construction leaves states with identical futures (one per NFA path, e.g. per keyword/operator branch); Hopcroft minimization in flex_tables merges them, shrinking the table and the goto code without changing a token | 10.743 -> 10.711 ms (0%); V8 flex -> V9 flex (table mode); `table` 10.642 -> 10.981 (+3%), `goto` 21.090 -> 21.181 (0%) | 1.048 -> 1.008 ms (-4%, V9 round range 0.929-1.163, within noise); wasm3_m3_parse -4%, doom_p_mobj +15% (0.769 -> 0.882, all three rounds); `goto` 1.079 -> 1.013 (-6%) | C11 lexer 193 -> 115 states, merged table 14282 -> 8510 entries (74 classes); token streams identical on flex/table/goto/flex-call over the five C inputs |
 | 10 groups by re-match | `group(n)` / `group_span(n)` re-run the rule's own anchored regex once per token, only in rules whose bodies call them; the automaton, the scanner loop and the token stream are untouched, so the token stream and the speed of rules without groups do not change | 10.471 -> 10.254 ms (-2%); A flex -> B flex (table mode); `goto` 20.874 -> 20.901 (0%), `reader` 10.421 -> 10.406 (0%); doom_p_mobj -2%, wasm3_m3_parse -1% | 1.024 -> 1.031 ms (+1%; A round range 0.882-1.033); `goto` 1.043 -> 1.039 (0%), `reader` 1.066 -> 1.054 (-1%); doom_p_mobj -1%, wasm3_m3_parse +4%; the unchanged hand-written control `probe` moved +10% / +9% / -1% between the same two binaries, the noise floor of this run | kept: rules without `group` pay nothing within noise, B/A 0.93-1.04 over flex/goto/reader, three files, both tiers; token streams of A and B identical on flex/goto/reader/probe over the three inputs |
-| 11 identifiers as symbols | the identifier rule builds a string per identifier and hashes it twice (keywords, typedefs); a span-keyed interner (`flex/flex_symbols.das`) finds the name by its bytes, keywords and typedef names become kinds of symbols, and the token array keeps the symbol instead of the text | 12.483 -> 14.667 ms (+17%); 1bd4c2c -> 31f23a6, token array | 0.937 -> 0.775 ms (-17%); count only 0.699 -> 0.538 (-23%) | kept: no string per identifier in either tier; JIT faster on every driver and file, interpreter slower on every one - "Identifiers as symbols" |
+| 11 identifiers as symbols | the identifier rule builds a string per identifier and hashes it twice (keywords, typedefs); a span-keyed interner (`flex/flex_symbols.das`) finds the name by its bytes, keywords and typedef names become kinds of symbols, and the token array keeps the symbol instead of the text | 11.784 -> 14.336 ms (+22%); 0b63792 -> c223636, token array | 0.929 -> 0.759 ms (-18%); count only 0.681 -> 0.519 (-24%) | kept: no string per identifier in either tier; JIT faster on every driver and file, interpreter slower on every one - "Identifiers as symbols" |
 
 Measured cells: doom_am_map.i, median of 3 rounds of in-process medians (`--time 9`), daslang 0.6.6, each
 column set one run alone on a quiet machine (cpu busy 1-2%). Steps 1-6: BASE = ee7eec8, FINAL = 40f12d8. Step 7:
@@ -137,29 +137,28 @@ compile without a cache pays it once per `[flex]` scanner.
 ## Identifiers as symbols
 
 What finding identifiers by their bytes costs against the string per identifier: before = the
-`unicode` head (1bd4c2c), after = `intern` (31f23a6), the same driver in both. Before, the
+`unicode` head (0b63792), after = `intern` (c223636), the same driver in both. Before, the
 identifier rule built the word's string (`text()`) and looked it up in `KEYWORDS` and in the
 typedef table; after, it interns the span (`flex/flex_symbols.das`) and emits the symbol's kind -
 keywords and typedef names are kinds of symbols - and the token arrays of `--mode flex` and
 `--mode probe` keep an identifier as its symbol, with no string (the probe interns through the same
-call). One run, alone on a quiet machine (`heavy: machine quiet (cpu busy 2%)`; exclusive log
-`11-26 04:48:14 exclusive intern-numbers busy=2% waited=10s`), daslang 0.6.6; each cell is the
-median of 3 rounds, the two trees in alternating order, every round one process per tree, tier,
-driver and file, each process the median of 9 passes; JIT is `-jit -jit-no-cache`. Ms; the round
-range stays within 9% of the cell except count-only interp doom_am_map before (32%, one round),
-wasm3_m3_parse before (16%) and probe interp doom_am_map after (41%, one round).
+call). One run, alone on a quiet machine (cpu busy 1%), daslang 0.6.6; each cell is the median of 3
+rounds, the two trees in alternating order, every round one process per tree, tier, driver and
+file, each process the median of 9 passes; JIT is `-jit -jit-no-cache`. Ms; the round range stays
+within 5% of the cell except count-only JIT doom_p_mobj after (13%, one round) and probe interp
+doom_p_mobj before (13%, one round).
 
 | measure | interp before | interp after | jit before | jit after |
 |---|---|---|---|---|
-| count only, doom_am_map.i | 10.539 | 12.796 (+21%) | 0.699 | 0.538 (-23%) |
-| count only, doom_p_mobj.i | 9.067 | 11.083 (+22%) | 0.625 | 0.464 (-26%) |
-| count only, wasm3_m3_parse.i | 10.922 | 12.433 (+14%) | 0.719 | 0.507 (-29%) |
-| token array, doom_am_map.i | 12.483 | 14.667 (+17%) | 0.937 | 0.775 (-17%) |
-| token array, doom_p_mobj.i | 10.577 | 12.563 (+19%) | 0.813 | 0.621 (-24%) |
-| token array, wasm3_m3_parse.i | 12.815 | 14.271 (+11%) | 0.941 | 0.730 (-22%) |
-| hand-written, doom_am_map.i | 8.194 | 10.255 (+25%) | 1.238 | 1.079 (-13%) |
-| hand-written, doom_p_mobj.i | 6.810 | 8.836 (+30%) | 1.010 | 0.844 (-16%) |
-| hand-written, wasm3_m3_parse.i | 8.142 | 9.800 (+20%) | 1.228 | 1.017 (-17%) |
+| count only, doom_am_map.i | 10.135 | 12.530 (+24%) | 0.681 | 0.519 (-24%) |
+| count only, doom_p_mobj.i | 8.734 | 11.033 (+26%) | 0.603 | 0.456 (-24%) |
+| count only, wasm3_m3_parse.i | 10.582 | 12.333 (+17%) | 0.693 | 0.484 (-30%) |
+| token array, doom_am_map.i | 11.784 | 14.336 (+22%) | 0.929 | 0.759 (-18%) |
+| token array, doom_p_mobj.i | 9.908 | 12.569 (+27%) | 0.763 | 0.612 (-20%) |
+| token array, wasm3_m3_parse.i | 11.989 | 13.853 (+16%) | 0.932 | 0.725 (-22%) |
+| hand-written, doom_am_map.i | 7.959 | 10.409 (+31%) | 1.197 | 1.084 (-9%) |
+| hand-written, doom_p_mobj.i | 6.700 | 8.676 (+29%) | 0.973 | 0.845 (-13%) |
+| hand-written, wasm3_m3_parse.i | 8.038 | 9.634 (+20%) | 1.165 | 1.013 (-13%) |
 
 Heap probe, one count-only scan (`--count` prints it as `HEAP`), both tiers: before, 7 009 / 6 478 /
 7 498 string-heap allocations per pass on the three files - one per identifier - and no heap
@@ -168,17 +167,29 @@ interpreter, 8 / 8 / 4 under the JIT - the interner's arrays growing to 2 669 / 
 distinct names, since every pass opens a fresh lexer. `tests/c_lexer_tests.das` holds the property:
 twenty copies of a source allocate what one does, and no string.
 
-The JIT gains 23-29% on the scan, short of the 35-40% the study expected from a lookup-only table
-of keywords and typedef names with a 4-byte hash. The difference is the interning itself: about 40%
-of the identifiers of a preprocessed file are first occurrences (2 669 distinct names in 7 009 on
-doom_am_map.i), so the table holds every name rather than a few hundred, a lookup misses the cache
-more often, and each first occurrence appends an entry; directional checks off the exclusive run
-(not quoted) put the hits at most of the remaining gap to a scan that does no lookup at all, the
-inserts at the rest, and found nothing in the hash or in the call chain. The interpreter loses
-14-30%: the string and the two table lookups it replaces were three native calls, the hash and the
-probe are daslang code whose every statement is a node. Folding the hash into the scanner's byte
-loop (the study's lesson 2) removes the hash from both tiers and is the next step for the
-interpreter.
+The JIT gains 24-30% on the count-only scan, short of the 35-40% the study expected from a
+lookup-only table of keywords and typedef names with a 4-byte hash. The difference is the interning
+itself: about 40% of the identifiers of a preprocessed file are first occurrences (2 669 distinct
+names in 7 009 on doom_am_map.i), so the table holds every name rather than a few hundred, a lookup
+misses the cache more often, and each first occurrence appends an entry.
+
+The interpreter loses 16-31%: the string and the two table lookups it replaces were three native
+calls, the hash and the probe are daslang code whose every statement is a node - 145-190 ns per
+hit interpreted against 8-11 under the JIT (indicative, a hit loop over the identifiers of one
+file into a filled table). daslang binds no native hash of a byte span: `hash` takes a whole string
+or value, a span has no terminating zero for `hash64z`, and `build_hash` goes through a block and a
+writer. Two shapes were tried against this one, both indicative and neither kept:
+
+- slots holding two key words and the length, so a probe reads the slot and no entry and a name of
+  up to 16 bytes is compared as integers: 6-7% faster per hit interpreted, but the count-only scan
+  4-7% slower in both tiers - the slots grow from 4 to 24 bytes, and the scan's misses and inserts
+  pay for it;
+- a native `table<uint64; int>` for names of up to 7 bytes, keyed by their exact packing with the
+  length in the top byte, so a short name's hit is one native lookup: the count-only scan 1-2% slower
+  interpreted and 2-4% slower under the JIT.
+
+Folding the hash into the scanner's byte loop (the study's lesson 2) removes the hash from both
+tiers and is the next step for the interpreter.
 
 ## What the JIT IR says (LLVM 22, `--jit-dump`)
 - the rule dispatch is already a `switch` in both shapes, so the dispatch step is an interpreter step only;
