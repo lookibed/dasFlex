@@ -470,14 +470,40 @@ def test_codepoint_set(t : T?) {
     probes |> push_from([int(0x1F5FF), int(0x1F600), int(0x1F601)])
     check_codepoint_set(t, "[a-c\\u00e9-\\u00eb\\U0001F600]",
                         [int2('a', 'c'), int2(int(0xE9), int(0xEB)), int2(int(0x1F600), int(0x1F600))], probes)
+    var negated_probes := probes
+    negated_probes |> push_from([int(0xFFFF), int(0x10FFFF)])
     check_codepoint_set(t, "[^a\\u00e9]", [int2(0, 'a' - 1), int2('a' + 1, int(0xE8)), int2(int(0xEA), int(0x10FFFF))],
-                        [1, 10, 'a', 'b', int(0xE9), int(0xEA), int(0xFFFF), int(0x10FFFF)])
+                        negated_probes)
     let tb <- flex_tables([FlexRule(pattern = "[^a\\u00e9]")])
     for (word in ["\x80", "\xC3", "\xED\xA0\x80", "\xC0\x80", "\xF4\x90\x80\x80"]) {
         t |> equal(whole_word_rule(tb, word), -1, word)
     }
     let bytes <- flex_tables([FlexRule(pattern = "[\xC3]")])
     t |> equal(whole_word_rule(bytes, "\xC3"), 0)
+}
+
+[test(description = "a member inside an earlier range keeps the range whole, plain and negated; the control escapes, an escaped ], - and backslash, and a - first or last are members of a code-point set")]
+def test_codepoint_set_members(t : T?) {
+    let edges <- [int(0xFF), int(0x100), int(0x150), int(0x151), int(0x200), int(0x201)]
+    check_codepoint_set(t, "[\\u0100-\\u0200\\u0150]", [int2(int(0x100), int(0x200))], edges)
+    check_codepoint_set(t, "[^\\u0100-\\u0200\\u0150]", [int2(0, int(0xFF)), int2(int(0x201), int(0x10FFFF))], edges)
+    check_codepoint_set(t, "[\\n\\t\\u00e9]", [int2(10, 10), int2(9, 9), int2(int(0xE9), int(0xE9))],
+                        [8, 9, 10, 11, 'n', 't', int(0xE9)])
+    check_codepoint_set(t, "[\\]\\-\\\\\\u00e9]", [int2(']', ']'), int2('-', '-'), int2('\\', '\\'), int2(int(0xE9), int(0xE9))],
+                        [']', '-', '\\', '[', ',', '.', 'u', int(0xE9)])
+    let ends <- ['-', ',', '.', 'a', 'b', int(0xE9), int(0xEA)]
+    check_codepoint_set(t, "[-a\\u00e9-]", [int2('-', '-'), int2('a', 'a'), int2(int(0xE9), int(0xE9))], ends)
+    check_codepoint_set(t, "[a\\u00e9-]", [int2('-', '-'), int2('a', 'a'), int2(int(0xE9), int(0xE9))], ends)
+}
+
+[test(description = "a code-point set holding no code point - the whole range negated - matches nothing, so under ? the rule takes the text around it alone")]
+def test_codepoint_set_empty(t : T?) {
+    let tb <- flex_tables([FlexRule(pattern = "x[^\\u0000-\\U0010FFFF]?y")])
+    t |> equal(tb.err, "")
+    t |> equal(whole_word_rule(tb, "xy"), 0)
+    for (word in ["xay", "xxy", "x\xC3\xA9y", "x\xF4\x8F\xBF\xBFy"]) {
+        t |> equal(whole_word_rule(tb, word), -1, word)
+    }
 }
 
 [test(description = "[\\u0080-\\U0010FFFF] takes every code point past ASCII at each UTF-8 length boundary and on a stride across the range, and no overlong form, surrogate, lone or cut sequence, or byte past F4")]
@@ -506,7 +532,7 @@ def test_codepoint_range_splits(t : T?) {
     check_codepoint_set(t, pattern, ranges, probes)
 }
 
-[test(description = "a malformed code-point escape, or a set form a code-point set does not take, refuses the rule with the reason and its index")]
+[test(description = "a malformed code-point escape, or a set form a code-point set does not take, refuses the rule with the reason and its index; a backslash ending the pattern after one is left to daslib/regex, which refuses it")]
 def test_codepoint_refused(t : T?) {
     for (pattern in ["\\u00G1", "\\uD800", "\\U00110000", "\\u00e", "[\\uDFFF]"]) {
         let tb <- flex_tables([FlexRule(pattern = "b"), FlexRule(pattern = pattern)])
@@ -519,6 +545,9 @@ def test_codepoint_refused(t : T?) {
     t |> success(find(raw.err, "spells a character past 127 as \\u or \\U") >= 0, raw.err)
     let back <- flex_tables([FlexRule(pattern = "[\\u00e9-\\u00a0]")])
     t |> success(find(back.err, "runs backwards") >= 0, back.err)
+    let tail <- flex_tables([FlexRule(pattern = "\\u00e9\\")])
+    t |> success(find(tail.err, "does not parse") >= 0, tail.err)
+    t |> equal(tail.err_rule, 0)
 }
 
 //! what the code-point rule's group calls returned

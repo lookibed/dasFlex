@@ -231,7 +231,7 @@ def private utf8_sequences(lo, hi : int; var out : array<string>) {
         let r = stack |> back()
         stack |> pop()
         var parts = int2(-1, -1)
-        for (top in fixed_array(int(0x7F), int(0x7FF), int(0xFFFF))) {
+        for (top in fixed_array(int(0x7FF), int(0xFFFF))) {
             if (r.x <= top && top < r.y) {
                 parts = int2(top, top + 1)
                 break
