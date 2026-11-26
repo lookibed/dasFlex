@@ -280,6 +280,13 @@ def test_shape_follows_tier(t : T?) {
     t |> equal(length(native.slots), 0)
 }
 
+[test(description = "flex_jit_tier() given an argument fails the compile at the call, with the macro's message")]
+def test_jit_tier_takes_no_arguments(t : T?) {
+    let issues = compile_issues("tier.das", "options gen2\nrequire flex/flex_tier\n\nlet x = flex_jit_tier(1)\n")
+    t |> success(starts_with(issues, "error[50503]: flex_jit_tier() takes no arguments\ntier.das:4:8\n"), issues)
+    t |> equal(compile_issues("tier_ok.das", "options gen2\nrequire flex/flex_tier\n\nlet x = flex_jit_tier()\n"), "")
+}
+
 [test(description = "a native interner tells apart names that hold a zero byte and agree up to it - and the name that ends there - by comparing all their bytes, and finds each again")]
 def test_native_zero_byte_names(t : T?) {
     var bytes <- array<uint8>(uint8('a'), 0u8, uint8('b'), uint8('a'), 0u8, uint8('c'), uint8('a'), 0u8, uint8('b'))
@@ -331,6 +338,26 @@ def test_native_arena_blocks(t : T?) {
     }
     t |> equal(intern_name(syms, long_name), long_id)
     t |> equal(symbol_text(syms, long_id), long_name)
+}
+
+[test(description = "a name that leaves one byte of an arena block makes the next name, of one byte and its zero, take a new block: the block never overflows, and the first name's bytes, view, id and text stay")]
+def test_native_arena_exact_fit(t : T?) {
+    var syms <- FlexSymbols(shape = FlexSymbolsShape.native)
+    let long_name = repeat("F", 16382)
+    let long_id = intern_name(syms, long_name)
+    t |> equal(length(syms.arena), 1)
+    t |> equal(syms.arena_left, 1)
+    let view = syms.entries[long_id].view
+    let short_id = intern_at(syms, " z ", 1, 1)
+    t |> equal(length(syms.arena), 2)
+    t |> success(syms.arena_left >= 0, "{syms.arena_left}")
+    t |> equal(syms.entries[long_id].view, view)
+    t |> equal(syms.arena[0][16381], uint8('F'))
+    t |> equal(syms.arena[0][16382], 0u8)
+    t |> equal(intern_name(syms, long_name), long_id)
+    t |> equal(intern_at(syms, "z", 0, 1), short_id)
+    t |> equal(symbol_text(syms, long_id), long_name)
+    t |> equal(symbol_text(syms, short_id), "z")
 }
 
 [flex]
@@ -444,4 +471,68 @@ def test_open_keeps_spare_byte(t : T?) {
     flex_open(lx, "abc")
     t |> equal(lx.len, 3)
     t |> equal(lx.bytes[3], 0u8)
+}
+
+[test(description = "a panic in the native insert of intern(lx) - the table locked - leaves the byte after the token as the input had it, in both tiers")]
+def test_native_panic_restores_byte(t : T?) {
+    var lx : FlexLexer
+    lx.syms.shape = FlexSymbolsShape.native
+    flex_open(lx, "ab cd")
+    var panicked = false
+    lock(lx.syms.ids) $(_ids) {
+        try {
+            interning_lexer(lx)
+        } recover {
+            panicked = true
+        }
+    }
+    t |> success(panicked)
+    t |> equal(lx.bytes[2], uint8(' '))
+}
+
+//! a name a run of bytes other than `;`, zero bytes included, its rule
+//! emitting the kind of the token's symbol
+[flex]
+def zero_byte_lexer(var lx : FlexLexer) : bool {
+    rule("[^;]+") {
+        lx |> emit(symbol_kind(lx.syms, intern(lx)))
+    }
+    rule(";") {
+    }
+}
+
+[test(description = "intern(lx) on names holding a zero byte - a\\0b, a\\0c, their prefix a, each again, a `;` after each - gives each its own stable id, kind and full text, and leaves the lexer's bytes as the input, in both shapes")]
+def test_lexer_zero_byte_names(t : T?) {
+    var inscope expected <- [[uint8('a'), 0u8, uint8('b')], [uint8('a'), 0u8, uint8('c')], [uint8('a')]]
+    for (shape in SHAPES) {
+        var lx : FlexLexer
+        lx.syms.shape = shape
+        lx.syms.fresh_kind = -1
+        flex_open(lx, "a\x01b;a\x01c;a;a\x01b;a\x01c;a;")
+        for (at in [1, 5, 11, 15]) {
+            lx.bytes[at] = 0u8
+        }
+        var inscope input <- clone_to_move(lx.bytes)
+        var inscope ids, kinds : array<int>
+        ids |> reserve(6)
+        kinds |> reserve(6)
+        while (zero_byte_lexer(lx)) {
+            t |> equal(lx.bytes, input, "{shape}")
+            ids |> push(lx.tok.sym)
+            kinds |> push(lx.tok.kind)
+            if (lx.tok.kind < 0) {
+                set_symbol_kind(lx.syms, lx.tok.sym, 10 + lx.tok.sym)
+            }
+        }
+        t |> equal(lx.err, "", "{shape}")
+        t |> equal(ids, [0, 1, 2, 0, 1, 2], "{shape}")
+        t |> equal(kinds, [-1, -1, -1, 10, 11, 12], "{shape}")
+        t |> equal(symbol_count(lx.syms), 3, "{shape}")
+        continue if (symbol_count(lx.syms) != 3)
+        for (id, want in count(), expected) {
+            let text = symbol_text(lx.syms, id)
+            let q = unsafe(reinterpret<uint8 const?>(text))
+            t |> equal([for (i in range(length(want))); unsafe(q[i])], want, "{shape} {id}")
+        }
+    }
 }
