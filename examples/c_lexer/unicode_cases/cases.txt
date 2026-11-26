@@ -7,10 +7,12 @@
 #   case    the input is <name>.c
 #   lexer   clang      - the lexer produces the clang stream: kinds mapped to the lexer's, each
 #                        token's byte range equal
-#           error N    - the clang tokens that start before byte N, each cut at N, then the lexer
+#           error N    - the clang tokens that start before byte N, each cut at N (a literal cut
+#                        before its quote is the identifier its prefix spells), then the lexer
 #                        fails with its cursor at byte N (an `unknown` token in clang's stream, a
 #                        character clang reports inside an identifier it keeps whole, or the quote
-#                        of a literal holding an escape C11 6.4.4.4 does not list)
+#                        of a literal the rules refuse: an escape C11 6.4.4.4 does not list, a
+#                        newline or the end of the file before it closes, nothing inside quotes)
 #           none ...   - out of scope for a lexer of preprocessed text, recorded only
 #   tok     clang's kind, byte offset, byte length, spelling (bytes outside UTF-8 as \xNN)
 
@@ -186,6 +188,22 @@ tok	identifier	4	1	q
 tok	unknown	5	6	\uD800
 tok	semi	11	1	;
 
+case	ident_emoji_ucn
+about	an emoji and a UCN in one identifier, in each order: a four-byte character starts the extended identifier rule, and continues it after a UCN
+clang	accept
+gcc	accept
+lexer	clang
+tok	int	0	3	int
+tok	identifier	4	10	😀\u00e9
+tok	equal	15	1	=
+tok	numeric_constant	17	1	1
+tok	semi	18	1	;
+tok	int	20	3	int
+tok	identifier	24	10	\u00e9😀
+tok	equal	35	1	=
+tok	numeric_constant	37	1	2
+tok	semi	38	1	;
+
 case	literal_ucn
 about	UCNs in string and character literals
 clang	accept
@@ -313,6 +331,82 @@ tok	equal	6	1	=
 tok	char_constant	8	4	'é'
 tok	semi	12	1	;
 
+case	literal_bad_escape
+about	an escape C11 6.4.4.4 does not list, in a string: clang warns and keeps the literal, the lexer refuses it at its quote
+clang	accept - 1:18 warning: unknown escape sequence '\q' [-Wunknown-escape-sequence]
+gcc	accept - 1:21 warning: unknown escape sequence: '\q'
+lexer	error 16
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	s
+tok	equal	14	1	=
+tok	string_literal	16	4	"\q"
+tok	semi	20	1	;
+
+case	literal_bad_hex
+about	\x with no hex digit after it, in a string
+clang	reject - 1:18 error: \x used with no following hex digits
+gcc	reject - 1:22 error: \x used with no following hex digits
+lexer	error 16
+tok	const	0	5	const
+tok	char	6	4	char
+tok	star	11	1	*
+tok	identifier	12	1	s
+tok	equal	14	1	=
+tok	string_literal	16	5	"\xg"
+tok	semi	21	1	;
+
+case	literal_newline
+about	a string literal running into a newline, on line 3 after a comment spanning lines: clang lexes an unknown token, the lexer fails at the quote
+clang	reject - 3:24 error: expected expression
+gcc	reject - 3:24 error: missing terminating " character
+lexer	error 37
+tok	int	0	3	int
+tok	identifier	4	1	a
+tok	semi	5	1	;
+tok	const	21	5	const
+tok	char	27	4	char
+tok	star	32	1	*
+tok	identifier	33	1	s
+tok	equal	35	1	=
+tok	unknown	37	3	"ab
+tok	identifier	41	2	cd
+tok	unknown	43	2	";
+
+case	literal_unclosed_eof
+about	a character constant still open at the end of the file
+clang	reject - 1:9 error: expected expression
+gcc	reject - 1:9 error: missing terminating ' character
+lexer	error 8
+tok	int	0	3	int
+tok	identifier	4	1	x
+tok	equal	6	1	=
+tok	unknown	8	2	'a
+
+case	literal_empty_char
+about	an empty character constant
+clang	reject - 1:9 error: expected expression
+gcc	reject - 1:9 error: empty character constant
+lexer	error 8
+tok	int	0	3	int
+tok	identifier	4	1	c
+tok	equal	6	1	=
+tok	unknown	8	2	''
+tok	semi	10	1	;
+
+case	literal_prefixed_bad
+about	an L string literal holding an escape C11 does not list: the lexer takes the prefix L as an identifier and fails at the quote
+clang	accept - 1:13 warning: unknown escape sequence '\q' [-Wunknown-escape-sequence]
+gcc	accept - 1:16 warning: unknown escape sequence: '\q'
+lexer	error 11
+tok	void	0	4	void
+tok	star	5	1	*
+tok	identifier	6	1	s
+tok	equal	8	1	=
+tok	wide_string_literal	10	5	L"\q"
+tok	semi	15	1	;
+
 case	bom_start
 about	a UTF-8 byte order mark at offset 0 is skipped
 clang	accept
@@ -405,6 +499,18 @@ tok	identifier	4	1	a
 tok	unknown	5	1	\xE0
 tok	unknown	6	1	\x80
 tok	unknown	7	1	\xAF
+tok	semi	8	1	;
+
+case	overlong_annex_ident
+about	an overlong three-byte encoding of U+00A8, a character Annex D.1 allows: not UTF-8, so the identifier ends before it
+clang	reject - 1:6 error: source file is not valid UTF-8
+gcc	reject - 1:6 error: stray ‘\340’ in program
+lexer	error 5
+tok	int	0	3	int
+tok	identifier	4	1	a
+tok	unknown	5	1	\xE0
+tok	unknown	6	1	\x82
+tok	unknown	7	1	\xA8
 tok	semi	8	1	;
 
 case	surrogate_ident

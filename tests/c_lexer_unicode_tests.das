@@ -10,6 +10,8 @@ require math
 require _flex_test_helpers
 require ../examples/c_lexer/c_lexer.das
 require ../examples/c_lexer/c_lexer_variants.das
+require ../examples/c_lexer/c_lexer_goto.das
+require ../examples/c_lexer/c_lexer_reader.das
 require ../examples/c_lexer/c_lex_compare.das
 
 // The C lexer example against the Unicode case table in examples/c_lexer/unicode_cases/cases.txt:
@@ -93,7 +95,8 @@ def expected_stream(c : UnicodeCase) : array<string> {
     for (tok in c.tokens) {
         continue if (cut >= 0 && tok.start >= cut)
         let len = cut >= 0 ? min(tok.len, cut - tok.start) : tok.len
-        out |> push("{tok.kind} {tok.start} {len}")
+        let literal = ends_with(tok.kind, "string_literal") || ends_with(tok.kind, "char_constant")
+        out |> push("{len < tok.len && literal ? "identifier" : tok.kind} {tok.start} {len}")
     }
     if (cut >= 0) {
         out |> push("error {cut}")
@@ -241,20 +244,88 @@ def private has_utf8_identifier(toks : array<Tok>) : bool {
     return false
 }
 
-[test(description = "on every case input the hand-written lexer (--mode probe) gives the token stream of c_next, up to the byte the rules stop at; daslib/regex rule by rule (--mode regex) too, except on an input whose identifiers hold UTF-8, which its rules do not take")]
+[test(description = "on every case input the hand-written lexer (--mode probe) gives the token stream of c_next and, where the rules stop, c_next's error text; daslib/regex rule by rule (--mode regex) too, except on an input whose identifiers hold UTF-8, which its rules do not take")]
 def test_probe_and_regex_follow_the_rules(t : T?) {
     let cases <- read_cases()
     var rules <- regex_rules()
     var inscope typedefs : table<string; int>
     var regex_checked = 0
+    var errors = 0
+    var errors_past_line_1 = 0
     for (c in cases) {
         let src = fread(path_join(cases_dir(), "{c.name}.c"))
-        var inscope rule_toks <- lex_flex(src, typedefs, "flex")
-        var inscope want <- tok_lines(rule_toks)
-        t |> equal(tok_lines(lex_probe(src, typedefs)), want, "{c.name} (probe)")
-        continue if (has_utf8_identifier(rule_toks))
+        var inscope by_rules <- lex_flex(src, typedefs, "flex")
+        var inscope want <- tok_lines(by_rules.toks)
+        errors += empty(by_rules.err) ? 0 : 1
+        errors_past_line_1 += empty(by_rules.err) || starts_with(by_rules.err, "1:") ? 0 : 1
+        var inscope probe <- lex_probe(src, typedefs)
+        t |> equal(tok_lines(probe.toks), want, "{c.name} (probe)")
+        t |> equal(probe.err, by_rules.err, "{c.name} (probe error)")
+        continue if (has_utf8_identifier(by_rules.toks))
         regex_checked++
-        t |> equal(tok_lines(lex_regex(src, typedefs, rules)), want, "{c.name} (regex)")
+        var inscope by_regex <- lex_regex(src, typedefs, rules)
+        t |> equal(tok_lines(by_regex.toks), want, "{c.name} (regex)")
+        t |> equal(by_regex.err, by_rules.err, "{c.name} (regex error)")
     }
     t |> success(regex_checked >= 20, "{regex_checked} cases checked in regex mode")
+    t |> success(errors >= 20 && errors_past_line_1 >= 1, "{errors} cases stop the rules, {errors_past_line_1} past line 1")
+}
+
+[test(description = "the probe's UTF-8 reader refuses the overlong three- and four-byte forms of U+00A8, a character Annex D allows, and takes its shortest forms")]
+def test_probe_refuses_overlong(t : T?) {
+    for (bytes, want in ["\xE0\x82\xA8", "\xF0\x80\x82\xA8", "\xC2\xA8", "\xE0\xA0\x80", "\xF0\x90\x80\x80"], [0, 0, 2, 3, 4]) {
+        peek_data(bytes) $(d) {
+            t |> equal(utf8_len(d, 0), want, bytes)
+        }
+    }
+}
+
+[test(description = "c_scanner hands back the scanner of each --mode name, and c_next for flex and for a name it does not know")]
+def test_c_scanner_dispatch(t : T?) {
+    t |> success(c_scanner("reader") == @@c_next_reader, "reader")
+    t |> success(c_scanner("goto") == @@c_next_goto, "goto")
+    t |> success(c_scanner("flex-dgoto") == @@c_next_dgoto, "flex-dgoto")
+    t |> success(c_scanner("flex-dtree") == @@c_next_dtree, "flex-dtree")
+    t |> success(c_scanner("goto-dgoto") == @@c_next_goto_dgoto, "goto-dgoto")
+    t |> success(c_scanner("flex-call") == @@c_next_call, "flex-call")
+    t |> success(c_scanner("table") == @@c_next_table, "table")
+    t |> success(c_scanner("flex") == @@c_next, "flex")
+    t |> success(c_scanner("no-such-shape") == @@c_next, "an unknown name")
+}
+
+[test(description = "a four-byte character starts an identifier a UCN goes on with, and goes on with one a UCN starts")]
+def test_ident_past_bmp_with_ucn(t : T?) {
+    t |> equal(default_stream("\xF0\x9F\x98\x80\\u00e9"), ["\xF0\x9F\x98\x80\\u00e9"])
+    t |> equal(default_stream("\\u00e9\xF0\x9F\x98\x80"), ["\\u00e9\xF0\x9F\x98\x80"])
+}
+
+//! what `cut_text_lexer` read through `text` before and after each `c_ident_cut`
+var private cut_texts : array<string>
+
+[flex]
+def cut_text_lexer(var lx : FlexLexer) : bool {
+    rule("[a-z\\u0080-\\U0010FFFF]+") {
+        cut_texts |> push(text(lx))
+        return false if (!c_ident_cut(lx))
+        cut_texts |> push(text(lx))
+        lx |> emit(1)
+    }
+}
+
+[test(description = "after an identifier cut short the lexer goes on at the cut's column and the token's text is the cut prefix, even when a rule read the text before the cut; after a byte order mark the first token is at column 4")]
+def test_columns_after_cut_and_bom(t : T?) {
+    var lx : FlexLexer
+    c_open(lx, "ab\xC3\x97")
+    t |> success(c_next(lx) && text(lx) == "ab", "the identifier cut before U+00D7")
+    t |> success(!c_next(lx) && lx.failed, "U+00D7 opens no token")
+    t |> equal(lx.err, "1:3: unexpected '\xC3\x97'")
+    var bom : FlexLexer
+    c_open(bom, "\xEF\xBB\xBFint")
+    t |> success(c_next(bom), "int after the byte order mark")
+    t |> equal(bom.tok.col, 4)
+    cut_texts |> clear()
+    var custom : FlexLexer
+    c_open(custom, "ab\xC3\x97")
+    t |> success(cut_text_lexer(custom), "the custom rule's identifier cut before U+00D7")
+    t |> equal(cut_texts, ["ab\xC3\x97", "ab"])
 }
