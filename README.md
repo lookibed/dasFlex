@@ -99,8 +99,10 @@ chibicc's `tokenize()` does work the dasFlex rows do not: it allocates a token p
 `tok`, the arena in `fast`), decodes every string literal into a fresh buffer and gives it a
 `calloc`'d array type, and numbers lines in a second pass over the token list; it does not tell keywords from identifiers and has no typedef
 lookup. Against `fast` the count-only JIT row takes 2.49-2.74x less time, the token-array JIT row
-1.71-1.80x less. The C lexer in `examples/c_lexer` does not carry `#` and `##` tokens, or chibicc's
-`has_space` / `at_bol` flags. Method and the step-by-step history: `PERF_LEDGER.md`.
+1.71-1.80x less. The table was taken with the C lexer's ASCII rules; what its Unicode rules cost
+is the ledger's "Unicode in the C lexer". The C lexer in `examples/c_lexer` does not carry `#` and
+`##` tokens, or chibicc's `has_space` / `at_bol` flags. Method and the step-by-step history:
+`PERF_LEDGER.md`.
 
 Install: `daspkg install github.com/lookibed/dasFlex`, then `require flex/flex_macro`.
 Run the tests from a daslang checkout: `daslang -load_module <dasFlex> dastest/dastest.das -- --test <dasFlex>/tests`.
