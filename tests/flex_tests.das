@@ -429,6 +429,67 @@ def test_minimized_keywords(t : T?) {
     }
 }
 
+[test(description = "the set index finds a set by its elements among sets sharing a hash: each of two sets under one hash, and no set for different elements or a different hash")]
+def test_set_index_hash_collision(t : T?) {
+    var idx : SetIndex
+    var inscope a <- [1, 2]
+    var inscope b <- [3]
+    t |> equal(add_set(idx, a, 7ul), 0)
+    t |> equal(add_set(idx, b, 7ul), 1)
+    t |> equal(find_set(idx, [1, 2], 7ul), 0)
+    t |> equal(find_set(idx, [3], 7ul), 1)
+    t |> equal(find_set(idx, [1, 3], 7ul), -1)
+    t |> equal(find_set(idx, [3], 8ul), -1)
+}
+
+//! a hand-built NFA of states 0, 1 and 2, none accepting and without edges, started at 0
+def private three_state_nfa() : Nfa {
+    var n = Nfa()
+    for (_ in range(3)) {
+        new_state(n)
+    }
+    n.starts |> push(0)
+    return <- n
+}
+
+[test(description = "two kernels with one epsilon closure are one DFA state: on a hand-built NFA s0 -a-> s1, s0 -b-> s2, s1 <-eps-> s2, s2 -b-> s2 subset construction yields 2 states")]
+def test_kernels_share_a_closure(t : T?) {
+    var n <- three_state_nfa()
+    let s0 = 0
+    let s1 = 1
+    let s2 = 2
+    n |> add_edge(s0, 'a', 'a', s1)
+    n |> add_edge(s0, 'b', 'b', s2)
+    n |> add_eps(s1, s2)
+    n |> add_eps(s2, s1)
+    n |> add_edge(s2, 'b', 'b', s2)
+    n.accept[s2] = 0
+    let tb <- build_tables(n)
+    t |> equal(tb.nstates, 2)
+    let ca = tb.class_of['a']
+    let cb = tb.class_of['b']
+    t |> equal(tb.next[ca], 1)
+    t |> equal(tb.next[cb], 1)
+    t |> equal(tb.next[tb.nclasses + cb], 1)
+}
+
+[test(description = "a kernel is a set: one class moving to the same NFA states in another order or more than once is the same DFA state")]
+def test_kernel_repeats(t : T?) {
+    var n <- three_state_nfa()
+    let s0 = 0
+    let s1 = 1
+    let s2 = 2
+    n |> add_edge(s0, 'a', 'a', s1)
+    n |> add_edge(s0, 'a', 'a', s2)
+    n |> add_edge(s0, 'b', 'b', s1)
+    n |> add_edge(s0, 'b', 'b', s2)
+    n |> add_edge(s0, 'b', 'b', s1)
+    n.accept[s1] = 0
+    n.accept[s2] = 0
+    let tb <- build_tables(n)
+    t |> equal(tb.nstates, 2)
+}
+
 [test(description = "`.` is one UTF-8 code point of one to four bytes, never a newline, never two code points or a malformed sequence")]
 def test_dot_is_one_code_point(t : T?) {
     let tb <- flex_tables([FlexRule(pattern = ".")])
@@ -530,6 +591,21 @@ def test_codepoint_range_splits(t : T?) {
     }
     let pattern = "[\\u007E-\\u0081\\u07FF-\\u0801\\u0FFF-\\u1001\\uD7FE-\\uE001\\uFFFE-\\U00010001\\U0002FFFD-\\U00030003\\U0010FFFE-\\U0010FFFF]"
     check_codepoint_set(t, pattern, ranges, probes)
+}
+
+[test(description = "the code-point trie writes a shared lead byte once and the members after it as one byte set, so the raw DFA of two two-byte members has 3 states")]
+def test_codepoint_trie_text(t : T?) {
+    let pattern = "[\\u00e9\\u00eb]"
+    t |> equal(flex_codepoints(pattern).text, "(?:[\\xC3][\\xA9\\xAB])")
+    let raw <- build_tables(build_nfa([FlexRule(pattern = pattern)], 1))
+    t |> equal(raw.nstates, 3)
+}
+
+[test(description = "trie siblings with the same tail share one byte set, so their lead bytes F1 and F2 fall in one byte class")]
+def test_shared_tail_one_class(t : T?) {
+    let tb <- flex_tables([FlexRule(pattern = "[\\U00040000\\U00080000]")])
+    t |> equal(tb.class_of[0xF1], tb.class_of[0xF2])
+    t |> equal(tb.nclasses, 7)
 }
 
 [test(description = "a malformed code-point escape, or a set form a code-point set does not take, refuses the rule with the reason and its index; a backslash ending the pattern after one is left to daslib/regex, which refuses it")]

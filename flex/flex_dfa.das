@@ -69,7 +69,7 @@ def private eps_closure(n : Nfa; var seen : array<int>; stamp : int; var states 
 
 //! interned sorted NFA state sets, numbered in the order they were added: `head[h]` is the newest
 //! set whose hash is `h`, `chain[id]` the set added before it with the same hash
-struct private SetIndex {
+struct SetIndex {
     sets : array<array<int>>
     head : table<uint64; int>
     chain : array<int>
@@ -92,7 +92,7 @@ def private same_set(a, b : array<int>) : bool {
 }
 
 //! the number of `st` in `idx`, or -1
-def private find_set(idx : SetIndex; st : array<int>; h : uint64) : int {
+def find_set(idx : SetIndex; st : array<int>; h : uint64) : int {
     var at = idx.head?[h] ?? -1
     while (at >= 0 && !same_set(idx.sets[at], st)) {
         at = idx.chain[at]
@@ -101,7 +101,7 @@ def private find_set(idx : SetIndex; st : array<int>; h : uint64) : int {
 }
 
 //! the number of the new set `st`, moved into `idx`
-def private add_set(var idx : SetIndex; var st : array<int>; h : uint64) : int {
+def add_set(var idx : SetIndex; var st : array<int>; h : uint64) : int {
     let at = length(idx.sets)
     idx.chain |> push(idx.head?[h] ?? -1)
     idx.head[h] = at
