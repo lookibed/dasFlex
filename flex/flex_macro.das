@@ -635,15 +635,51 @@ def private make_take(lx, mode, matcher : string) : array<ExpressionPtr> {
     }
 }
 
+//! the end of a rule that emitted: the token is handed out; a `flags` lexer first keeps where it
+//! ended - the offset, and the line of its last byte, the one before the cursor's when that byte
+//! is a newline
+[arch(at="../ARCHITECTURE_TOKENS.md#pp-flags")]
+def private make_done(lx : string; flags : bool) : array<ExpressionPtr> {
+    if (!flags) {
+        return <- qmacro_block_to_array() {
+            return true if ($i(lx).emitted)
+        }
+    }
+    return <- qmacro_block_to_array() {
+        if ($i(lx).emitted) {
+            $i(lx).prev_end = $i(lx).pos
+            $i(lx).prev_end_line = $i(lx).col == 1 ? $i(lx).line - 1 : $i(lx).line
+            return true
+        }
+    }
+}
+
+//! a `flags` lexer's token flags, written at the head of every rule body that is not empty, so the
+//! body reads them; an empty body can neither read them nor emit, and pays nothing
+[arch(at="../ARCHITECTURE_TOKENS.md#pp-flags")]
+def private add_flag_reads(var spec : FlexSpec; lx : string) {
+    for (arm in spec.arms) {
+        continue if (empty(arm.body))
+        var reads <- qmacro_block_to_array() {
+            $i(lx).tok.has_space = $i(lx).tok.start != $i(lx).prev_end
+            $i(lx).tok.at_bol = $i(lx).tok.line != $i(lx).prev_end_line
+        }
+        for (i in range(length(reads))) {
+            mark_generated(reads[i])
+            arm.body |> emplace(reads[i], i)
+        }
+    }
+}
+
 //! the generated function body: match, take the token, dispatch on the rule; the loop and its guards
 //! are generated, the user's rule bodies inside the arms are not
-[arch(at="../ARCHITECTURE_TOKENS.md#pp-flags")]
 def private make_scanner_body(spec : FlexSpec; g : TableGlobals; t : FlexTables;
-                              lx, mode, dispatch, matcher : string; at : LineInfo) : ExpressionPtr {
-    let base = mode == "goto" ? t.nstates + 1 : 0
-    var arms <- make_arms(spec, "flex`rule", dispatch, base, at)
-    var match <- make_match(g, t, lx, mode, matcher, at)
-    var take <- make_take(lx, mode, matcher)
+                              lx : string; shape : FlexShape; at : LineInfo) : ExpressionPtr {
+    let base = shape.mode == "goto" ? t.nstates + 1 : 0
+    var arms <- make_arms(spec, "flex`rule", shape.dispatch, base, at)
+    var match <- make_match(g, t, lx, shape.mode, shape.matcher, at)
+    var take <- make_take(lx, shape.mode, shape.matcher)
+    var done <- make_done(lx, shape.flags)
     var newBody = qmacro_block() {
         while (true) {
             return false if ($i(lx).pos >= $i(lx).len)
@@ -658,17 +694,9 @@ def private make_scanner_body(spec : FlexSpec; g : TableGlobals; t : FlexTables;
                 return false
             }
             $b(take)
-            $i(lx).tok.has_space = $i(lx).space_pending
-            $i(lx).tok.at_bol = $i(lx).bol_pending
             $i(lx).emitted = false
             $b(arms)
-            if ($i(lx).emitted) {
-                $i(lx).space_pending = false
-                $i(lx).bol_pending = $i(lx).col == 1
-                return true
-            }
-            $i(lx).space_pending = true
-            $i(lx).bol_pending ||= $i(lx).line != $i(lx).tok.line
+            $b(done)
         }
     }
     var top = (newBody as ExprBlock).list[0]
@@ -691,6 +719,7 @@ struct private FlexShape {
     mode : string
     dispatch : string
     matcher : string
+    flags : bool        //!< the tokens carry `has_space` and `at_bol`
     err : string
 }
 
@@ -700,12 +729,16 @@ def private flex_shape(args : AnnotationArgumentList) : FlexShape {
     var shape = FlexShape(mode = mode,
                           dispatch = string_arg(args, "dispatch", mode == "table" ? "goto" : "if"),
                           matcher = string_arg(args, "matcher", "inline"))
+    let flags = find_arg(args, "flags")
+    shape.flags = flags is tBool && flags as tBool
     if (shape.mode != "table" && shape.mode != "goto") {
         shape.err = "[flex] mode is table or goto, not {shape.mode}"
     } elif (shape.dispatch != "if" && shape.dispatch != "goto" && shape.dispatch != "tree") {
         shape.err = "[flex] dispatch is if, goto or tree, not {shape.dispatch}"
     } elif (shape.matcher != "call" && shape.matcher != "inline") {
         shape.err = "[flex] matcher is call or inline, not {shape.matcher}"
+    } elif (!(flags is tBool) && !(flags is nothing)) {
+        shape.err = "[flex] flags is true or false"
     }
     return shape
 }
@@ -750,8 +783,7 @@ def private flex_generate(var func : FunctionPtr; spec : FlexSpec; shape : FlexS
         let pattern = flex_codepoints(spec.rules[arm.rule].pattern).text
         return false if (!regex_global(arm.group_re, pattern, arm.site.at, errors))
     }
-    func.body = make_scanner_body(spec, g, t, lx, shape.mode, shape.dispatch, shape.matcher,
-                                  func.at)
+    func.body = make_scanner_body(spec, g, t, lx, shape, func.at)
     return true
 }
 
@@ -770,7 +802,9 @@ def private flex_apply(var func : FunctionPtr; args : AnnotationArgumentList; ta
         return false
     }
     var spec = FlexSpec(func_name = string(func.name))
-    invoke(collect, spec, string(func.arguments[0].name))
+    let lx = string(func.arguments[0].name)
+    invoke(collect, spec, lx)
+    add_flag_reads(spec, lx) if (shape.flags)
     return flex_generate(func, spec, shape, errors)
 }
 

@@ -369,14 +369,14 @@ def private numbers_only_pp_stream(src : string) : tuple<issues : string; stream
 def test_pp_rule_lines_other_at_end(t : T?) {
     let res <- numbers_only_pp_stream("12@")
     t |> equal(res.issues, "")
-    t |> equal(res.streams[0], ["1@1:1/b:12", "2@1:3/:@", ""])
+    t |> equal(res.streams[0], ["1@1:1:12", "2@1:3:@", ""])
 }
 
 [test(description = "pp_rule_lines over rules with no extended identifier rule gives the pp-number no identifier-continue characters: 1$ is a pp-number and a PP_OTHER")]
 def test_pp_rule_lines_no_ident_continue(t : T?) {
     let res <- numbers_only_pp_stream("1$")
     t |> equal(res.issues, "")
-    t |> equal(res.streams[0], ["1@1:1/b:1", "2@1:2/:$", ""])
+    t |> equal(res.streams[0], ["1@1:1:1", "2@1:2:$", ""])
 }
 
 //! `kind symbol` of every token of `src`, `typedef_names` declared
@@ -465,6 +465,16 @@ def test_scan_allocates_per_name(t : T?) {
     var inscope many <- time_count(repeat(once, 20), none, 1)
     t |> equal(many.string_allocs, 0ul)
     t |> equal(many.heap_allocs, one.heap_allocs)
+}
+
+[test(description = "a count-only scan with pp counts the preprocessing tokens of c_next_pp - a # line is tokens, not skipped - and builds no string")]
+def test_count_run_pp(t : T?) {
+    var inscope none : table<string; int>
+    var inscope plain <- time_count("#if X\nint x;", none, 1)
+    t |> equal(plain.tokens, 3)
+    var inscope pp <- time_count("#if X\nint x;", none, 1, true)
+    t |> equal(pp.tokens, 6)
+    t |> equal(pp.string_allocs, 0ul)
 }
 
 [test(description = "the token arrays of c_lex_compare carry an identifier as its symbol with no text until resolve_text, any other token as its text")]
@@ -588,16 +598,25 @@ def test_pp_hash(t : T?) {
                 "IDENTIFIER:a/s", "#:#/", "IDENTIFIER:b/"])
 }
 
-[test(description = "every scanner of C_SHAPES, the %flex~ reader among them, gives each token the flags of c_next, and a newline inside a block comment does not put the next token at the start of a line (C11 phase 3: the comment is one space)")]
-def test_flags_every_c_shape(t : T?) {
+[test(description = "no scanner of C_SHAPES, the %flex~ reader among them, asks for the flags: each token keeps has_space and at_bol false")]
+def test_no_flags_every_c_shape(t : T?) {
     let src = "int a;\n  b /* c\n */ c\nd /*\n*/\n/* e\n*/ f"
     for (shape in C_SHAPES) {
         var lx : FlexLexer
         let scan = c_scanner(shape)
         var inscope out <- lex_tokens(lx, src, $(var l : FlexLexer) => invoke(scan, l),
                                       $(var l : FlexLexer) => "{text(l)}/{flags_of(l.tok)}")
-        t |> equal(out, ["int/b", "a/s", ";/", "b/sb", "c/s", "d/sb", "f/sb"], shape)
+        t |> equal(out, ["int/", "a/", ";/", "b/", "c/", "d/", "f/"], shape)
     }
+}
+
+[test(description = "the C pp lexer gives a newline inside a block comment no at_bol for the next token (C11 phase 3: the comment is one space), a newline before or after the comment one")]
+def test_pp_flags_block_comment(t : T?) {
+    t |> equal(pp_tokens("int a;\n  b /* c\n */ c\nd /*\n*/\n/* e\n*/ f"),
+               ["IDENTIFIER:int/b", "IDENTIFIER:a/s", ";:;/", "IDENTIFIER:b/sb", "IDENTIFIER:c/s",
+                "IDENTIFIER:d/sb", "IDENTIFIER:f/sb"])
+    t |> equal(pp_tokens("a /*1\n*/ /*2\n*/ b\n/*3*/ c"),
+               ["IDENTIFIER:a/b", "IDENTIFIER:b/s", "IDENTIFIER:c/sb"])
 }
 
 [test(description = "the C pp lexer puts no # after a block comment that spans lines at the start of a line, unless the comment itself starts one")]

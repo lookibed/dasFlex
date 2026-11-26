@@ -430,7 +430,7 @@ def test_token_sym_reset(t : T?) {
     let res <- shape_streams("syms.das", SYM_RULES, shapes, "ab 1 cd ab 22", tier_is_jit())
     t |> equal(res.issues, "")
     for (stream in res.streams) {
-        t |> equal(stream, ["100@1:1/b:ab", "-1@1:4/s:1", "101@1:6/s:cd", "100@1:9/s:ab", "-1@1:12/s:22", ""])
+        t |> equal(stream, ["100@1:1:ab", "-1@1:4:1", "101@1:6:cd", "100@1:9:ab", "-1@1:12:22", ""])
     }
 }
 

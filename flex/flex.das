@@ -23,8 +23,8 @@ struct FlexToken {
     col : int
     text : string       //!< the matched text once `text()` built it; "" until then
     sym : int           //!< the symbol `intern(lx)` found; -1 if none, from `flex_open` on
-    has_space : bool    //!< a skipping rule ran since the previous token
-    at_bol : bool       //!< the first token of the input, or one a newline separates from the previous token
+    has_space : bool    //!< text was skipped since the previous token; written by a `flags` lexer only
+    at_bol : bool       //!< the first token of the input, or one a newline separates from the previous token; written by a `flags` lexer only
 }
 
 //! The scanner state.
@@ -45,9 +45,8 @@ struct FlexLexer {
     groups : array<range>       //!< the capture groups of one token, input offsets; -1 where absent
     groups_start : int          //!< the `tok.start` `groups` belong to
     groups_re : uint64          //!< the regex that filled `groups`, 0 when none did
-    space_pending : bool        //!< the next token's `has_space`
-    bol_pending : bool          //!< the next token's `at_bol`
-    bol_saved : bool            //!< `bol_pending` as a rule body keeps it across skipped text; the scanner never touches it
+    prev_end : int              //!< the input offset where the last emitted token ended; a `flags` lexer's
+    prev_end_line : int         //!< the line of the last emitted token's last byte, 0 before the first; a `flags` lexer's
 }
 
 //! Open `src` for scanning: the bytes are copied once, the string may go.
@@ -68,8 +67,10 @@ def flex_open(var lx : FlexLexer; src : string; file : string = "") {
     lx.file = file
     lx.err = ""
     lx.groups_re = 0ul
-    lx.space_pending = false
-    lx.bol_pending = true
+    lx.tok.has_space = false
+    lx.tok.at_bol = false
+    lx.prev_end = 0
+    lx.prev_end_line = 0
 }
 
 def flex_at_end(lx : FlexLexer) : bool => lx.pos >= lx.len

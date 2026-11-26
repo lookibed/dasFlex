@@ -6,8 +6,8 @@ options indenting = 4
 // `daslib/regex` tried rule by rule. `--dump` prints `NAME<TAB>text<TAB>line` per token after
 // the shared filter (GNU extension skipping, adjacent string literals joined, typedef tracking)
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
-// `--count` (with `--time N` and `--mode flex` or `flex-inline`) times the scanner alone: the lexer is opened outside the timer and
-// the loop counts tokens, with no token array and no `text()` per token.
+// `--count` (with `--time N` and `--mode flex`, `flex-inline` or `pp`) times the scanner alone: the lexer is opened outside the
+// timer and the loop counts tokens, with no token array and no `text()` per token.
 // A HEAP line follows with the heap and string-heap allocations of that
 // loop. The token arrays of the dasFlex and probe modes keep an
 // identifier as its symbol, with no string; the regex mode builds the
@@ -616,7 +616,7 @@ def dump_line(t : Tok; pp : bool) : string {
     return pp ? "{row}\t{t.has_space ? "space" : "-"}\t{t.at_bol ? "bol" : "-"}" : row
 }
 
-//! a count-only scan of the default shape: the tokens and the
+//! a count-only scan of the default shape or the pp lexer: the tokens and the
 //! symbols the lexer ended with, the heap and string-heap allocations
 //! of the last pass's loop, and each pass's milliseconds, sorted
 struct CountRun {
@@ -627,10 +627,10 @@ struct CountRun {
     times : array<double>
 }
 
-//! the default shape's scanner alone, `passes` times: the lexer is
-//! opened outside the timer, the loop counts tokens; the allocations
-//! are counted outside the timer
-def time_count(text : string; typedefs : table<string; int>; passes : int) : CountRun {
+//! the default shape's scanner alone, or the pp lexer's when `pp`,
+//! `passes` times: the lexer is opened outside the timer, the loop
+//! counts tokens; the allocations are counted outside the timer
+def time_count(text : string; typedefs : table<string; int>; passes : int; pp : bool = false) : CountRun {
     var run : CountRun
     run.times |> reserve(passes)
     for (_k in range(passes)) {
@@ -641,8 +641,14 @@ def time_count(text : string; typedefs : table<string; int>; passes : int) : Cou
         let heap0 = heap_allocation_count()
         let strings0 = string_heap_allocation_count()
         let t0 = ref_time_ticks()
-        while (c_next(lx)) {
-            ntok++
+        if (pp) {
+            while (c_next_pp(lx)) {
+                ntok++
+            }
+        } else {
+            while (c_next(lx)) {
+                ntok++
+            }
         }
         run.times |> push(double(get_time_usec(t0)) / 1000.0lf)
         run.heap_allocs = heap_allocation_count() - heap0
@@ -662,7 +668,7 @@ struct CompareArgs {
     dump : bool
     @clarg_doc = "lex each file N times and print the median, min and max milliseconds"
     time : int
-    @clarg_doc = "with --time and --mode flex or flex-inline: time the scanner alone, counting tokens (no token array, no text per token)"
+    @clarg_doc = "with --time and --mode flex, flex-inline or pp: time the scanner alone, counting tokens (no token array, no text per token)"
     count : bool
     @clarg_positional
     @clarg_doc = "the preprocessed C files"
@@ -674,8 +680,8 @@ def main() : int {
     var args = CompareArgs()
     let rc = parse_args_with_help(args, "c_lex_compare")
     return rc if (rc >= 0)
-    if (args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline"))) {
-        print("usage: c_lex_compare -- --mode flex|flex-inline --time N --count files...\n")
+    if (args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline" && args.mode != "pp"))) {
+        print("usage: c_lex_compare -- --mode flex|flex-inline|pp --time N --count files...\n")
         return 1
     }
     var rules <- regex_rules()
@@ -696,9 +702,11 @@ def main() : int {
             print("{path}: {args.mode}: {length(filtered.toks)} tokens, {filtered.typedef_count} typedefs\n")
         }
         if (args.count) {
-            var inscope run <- time_count(text, typedefs, args.time)
-            print("TIME flex+count {path} median_ms={run.times[length(run.times) / 2]} min={run.times[0]} max={run.times[length(run.times) - 1]} bytes={length(text)} tokens={run.tokens}\n")
-            print("HEAP flex+count {path} tokens={run.tokens} symbols={run.symbols} heap_allocs={int64(run.heap_allocs)} string_allocs={int64(run.string_allocs)}\n")
+            let pp = args.mode == "pp"
+            var inscope run <- time_count(text, typedefs, args.time, pp)
+            let tag = pp ? "pp+count" : "flex+count"
+            print("TIME {tag} {path} median_ms={run.times[length(run.times) / 2]} min={run.times[0]} max={run.times[length(run.times) - 1]} bytes={length(text)} tokens={run.tokens}\n")
+            print("HEAP {tag} {path} tokens={run.tokens} symbols={run.symbols} heap_allocs={int64(run.heap_allocs)} string_allocs={int64(run.string_allocs)}\n")
         } elif (args.time > 0) {
             var inscope times : array<double>
             times |> reserve(args.time)

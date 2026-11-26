@@ -286,8 +286,8 @@ struct private Definitions {
     shape_args : array<string>
 }
 
-//! one line of the definitions section: `%x` / `%s` start conditions, `%option key=value`, or a
-//! `NAME regex` definition
+//! one line of the definitions section: `%x` / `%s` start conditions, `%option key=value` or
+//! `%option flags`, or a `NAME regex` definition
 def private definition_line(var s : RScan; var out : Definitions; line : string) {
     var inscope items : array<string>
     for (word in split_by_chars(line, " \t")) {
@@ -310,9 +310,13 @@ def private definition_line(var s : RScan; var out : Definitions; line : string)
     } elif (head == "%option") {
         out.shape_args |> reserve(length(out.shape_args) + length(items))
         for (i in range(1, length(items))) {
+            if (items[i] == "flags") {
+                out.shape_args |> push("flags = true")
+                continue
+            }
             var inscope kv <- split(items[i], "=")
             if (length(kv) != 2 || (kv[0] != "mode" && kv[0] != "dispatch" && kv[0] != "matcher")) {
-                fail(s, "%option takes mode=, dispatch= and matcher=, not {items[i]}")
+                fail(s, "%option takes mode=, dispatch=, matcher= and flags, not {items[i]}")
                 return
             }
             out.shape_args |> push("{kv[0]} = {das_string_literal(kv[1])}")

@@ -65,7 +65,7 @@ def targets() : array<Target> {
                    + "cannot\n// remove one, since it sets the token flags. Neither this lexer nor "
                    + "`c_next` takes digraphs\n// (`<:`, `%:`)."),
                pp = true,
-               variants <- [Variant(name = "c_next_pp", mode = "pp")])]
+               variants <- [Variant(name = "c_next_pp", shape = "flags = true", mode = "pp")])]
 }
 
 //! the rules `pp_rule_lines` puts in place of the skipped `#` line; the reader's text starts with the
@@ -118,13 +118,18 @@ def private is_number_rule(lines : array<string>; first, last : int) : bool {
 
 //! `rules` as preprocessing tokens: the skipped `#` line becomes the `#` and `##` punctuators, the
 //! numeric constant rules one pp-number rule, an identifier is IDENTIFIER whatever its symbol's kind
-//! and the extended identifier rule's refused character PP_OTHER, and a catch-all rule comes last
+//! and the extended identifier rule's refused character PP_OTHER, a block comment keeps `at_bol` as
+//! one space would (`c_pp_comment_open`, `c_pp_comment_close`), and a catch-all rule comes last
 //! before the start conditions; every other line as it is
 [arch(at="../../ARCHITECTURE_TOKENS.md#pp-tokens")]
 def pp_rule_lines(rules : string) : string {
     let words = replace(replace(rules, "        return false if (!c_ident_cut(lx))\n        lx |> emit(c_word_kind(lx))",
                                 "        lx |> emit(c_pp_ident_cut(lx))"), "c_word_kind(lx)", "c_pp_word(lx)")
-    let lines <- split(words, "\n")
+    let comments = replace(replace(words, "        lx |> begin(\"COMMENT\")",
+                                   "        c_pp_comment_open(lx)\n        lx |> begin(\"COMMENT\")"),
+                           "            lx |> begin(\"INITIAL\")",
+                           "            c_pp_comment_close(lx)\n            lx |> begin(\"INITIAL\")")
+    let lines <- split(comments, "\n")
     let n = length(lines)
     let number_rule = replace(PP_NUMBER_RULE, "IDENT_CONTINUE", ident_continue(lines))
     var number_done = false

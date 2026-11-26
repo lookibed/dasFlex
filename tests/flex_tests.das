@@ -270,14 +270,14 @@ def test_shape_equivalence(t : T?) {
     let res <- shape_streams("shapes.das", SHAPE_RULES, EXPLICIT_SHAPES, src, tier_is_jit())
     t |> equal(res.issues, "")
     let want := res.streams[0]
-    t |> equal(want[length(want) - 2], "2@6:6/sb:w")
+    t |> equal(want[length(want) - 2], "2@6:6:w")
     for (stream in res.streams) {
         t |> equal(stream, want)
     }
     let bad <- shape_streams("shapes_bad.das", SHAPE_RULES, EXPLICIT_SHAPES, "a\n §",
                              tier_is_jit())
     t |> equal(bad.issues, "")
-    t |> equal(bad.streams[0], ["2@1:1/b:a", "t.txt:2:2: unexpected '§'"])
+    t |> equal(bad.streams[0], ["2@1:1:a", "t.txt:2:2: unexpected '§'"])
     for (stream in bad.streams) {
         t |> equal(stream, bad.streams[0])
     }
@@ -370,8 +370,8 @@ def test_minimized_token_stream(t : T?) {
     t |> equal(res.issues, "")
     for (stream in res.streams) {
         t |> equal(stream,
-                   ["1@1:1/b:ab", "1@1:4/s:cb", "2@1:7/s:12", "3@1:10/s:7x", "2@1:13/s:0",
-                    "1@1:14/:cb", "t.txt:1:17: unexpected 'a'"])
+                   ["1@1:1:ab", "1@1:4:cb", "2@1:7:12", "3@1:10:7x", "2@1:13:0", "1@1:14:cb",
+                            "t.txt:1:17: unexpected 'a'"])
     }
 }
 
@@ -711,21 +711,21 @@ def private group_streams(t : T?; name, src : string) : array<array<string>> {
 def test_group_text_and_span(t : T?) {
     for (stream in group_streams(t, "group_text.das", "ab=12  c=3")) {
         t |> equal(stream,
-                   ["1@1:1/b:ab=12", "1@1:8/s:c=3", "", "ab|12|0,2|3,5|ab=12", "c|3|7,8|9,10|c=3"])
+                   ["1@1:1:ab=12", "1@1:8:c=3", "", "ab|12|0,2|3,5|ab=12", "c|3|7,8|9,10|c=3"])
     }
 }
 
 [test(description = "a group that took no part in the match is the empty string, its span range(0, 0)")]
 def test_group_not_participating(t : T?) {
     for (stream in group_streams(t, "group_absent.das", "ff 0x1a")) {
-        t |> equal(stream, ["2@1:1/b:ff", "2@1:4/s:0x1a", "", "''|ff|0,0", "'0x'|1a|3,5"])
+        t |> equal(stream, ["2@1:1:ff", "2@1:4:0x1a", "", "''|ff|0,0", "'0x'|1a|3,5"])
     }
 }
 
 [test(description = "two rules with groups in one lexer each re-run their own regex, in table and goto mode alike")]
 def test_two_rules_with_groups(t : T?) {
     for (stream in group_streams(t, "group_two.das", "ab=1 0x2 c=3 7")) {
-        t |> equal(stream, ["1@1:1/b:ab=1", "2@1:6/s:0x2", "1@1:10/s:c=3", "2@1:14/s:7", "",
+        t |> equal(stream, ["1@1:1:ab=1", "2@1:6:0x2", "1@1:10:c=3", "2@1:14:7", "",
                             "ab|1|0,2|3,4|ab=1", "'0x'|2|5,7", "c|3|9,10|11,12|c=3", "''|7|0,0"])
     }
 }
@@ -839,7 +839,7 @@ def test_many_rules(t : T?) {
     let rules = many_rules()
     let in_goto <- shape_streams("many_goto.das", rules, ["mode = \"goto\""], "k7 k259 k130")
     t |> equal(in_goto.issues, "")
-    t |> equal(in_goto.streams, [["7@1:1/b:k7", "259@1:4/s:k259", "130@1:9/s:k130", ""]])
+    t |> equal(in_goto.streams, [["7@1:1:k7", "259@1:4:k259", "130@1:9:k130", ""]])
     let in_table <- shape_streams("many_table.das", rules, ["mode = \"table\""], "k7")
     t |> success(find(in_table.issues, "at most 254 rules") >= 0, in_table.issues)
 }
@@ -861,7 +861,7 @@ def test_newline_inside_token(t : T?) {
                              [REF_SHAPE, "mode = \"goto\", dispatch = \"if\"",
                               "mode = \"table\", matcher = \"inline\""], src, tier_is_jit())
     t |> equal(res.issues, "")
-    let want <- ["1@1:1/b:\"a\nb\"", "2@2:4/s:c", "1@3:1/sb:\"\n\n\"", "2@5:3/s:d", ""]
+    let want <- ["1@1:1:\"a\nb\"", "2@2:4:c", "1@3:1:\"\n\n\"", "2@5:3:d", ""]
     for (stream in res.streams) {
         t |> equal(stream, want)
     }
@@ -882,7 +882,7 @@ def test_newline_class_inside_a_set(t : T?) {
                               "mode = \"goto\""], "a b\nc;", tier_is_jit())
     t |> equal(res.issues, "")
     for (stream in res.streams) {
-        t |> equal(stream, ["1@1:1/b:a b\nc", "2@2:2/:;", ""])
+        t |> equal(stream, ["1@1:1:a b\nc", "2@2:2:;", ""])
     }
 }
 
@@ -894,20 +894,30 @@ def test_tier_default_mode(t : T?) {
     t |> equal(compile_issues("tier_jit.das", text, true), "")
 }
 
-[test(description = "a mode, dispatch or matcher value the annotation does not know fails the compile naming the value and the ones it takes")]
+[test(description = "a mode, dispatch, matcher or flags value the annotation does not know fails the compile naming the value or the ones it takes")]
 def test_bad_shape_values(t : T?) {
     let rules = "    rule(\"a\") \{ lx |> emit(1) \}\n"
-    for (shape, want in ["mode = \"tabel\"", "dispatch = \"switch\"", "matcher = \"loop\""],
+    for (shape, want in ["mode = \"tabel\"", "dispatch = \"switch\"", "matcher = \"loop\"", "flags = \"yes\""],
             ["[flex] mode is table or goto, not tabel",
              "[flex] dispatch is if, goto or tree, not switch",
-             "[flex] matcher is call or inline, not loop"]) {
+             "[flex] matcher is call or inline, not loop",
+             "[flex] flags is true or false"]) {
         let res <- shape_streams("bad_shape.das", rules, [shape], "a")
         t |> success(find(res.issues, want) >= 0, res.issues)
     }
 }
 
+//! every explicit shape and the default one, each asking for the token flags
+let private FLAG_SHAPES <- [for (shape in [REF_SHAPE, "mode = \"table\", dispatch = \"if\"",
+                                          "mode = \"table\", dispatch = \"goto\"",
+                                          "mode = \"table\", dispatch = \"tree\"",
+                                          "mode = \"goto\", dispatch = \"if\"",
+                                          "mode = \"goto\", dispatch = \"goto\"",
+                                          "mode = \"goto\", dispatch = \"tree\"", ""]);
+                            empty(shape) ? "flags = true" : "{shape}, flags = true"]
+
 //! a small grammar for the token flags: words, a `#` whose kind says whether its body saw `at_bol`, a
-//! token that ends its line, and whitespace and comments skipped
+//! token that ends its line, a string that may span lines, and whitespace and comments skipped
 let private FLAG_RULES = %stringify~
     rule("[a-z]+") {
         lx |> emit(1)
@@ -918,25 +928,48 @@ let private FLAG_RULES = %stringify~
     rule("!\\n") {
         lx |> emit(4)
     }
+    rule("\"[^\"]*\"") {
+        lx |> emit(5)
+    }
     rule("[ \\n]+") {
     }
     rule("/\\*[^*]*\\*/") {
     }
 %%
 
-[test(description = "has_space marks a token after skipped whitespace or a comment, at_bol the first token of the input and of each line - after a skipped newline, one inside a comment, or a token that ended its line; a rule body reads them; every shape gives the same flags")]
-def test_token_flags(t : T?) {
-    let src = "a b/*c*/d\n  e\n#f g#h !\nk\nx/*\n*/y"
-    var shapes := EXPLICIT_SHAPES
-    shapes |> push("")
-    let res <- shape_streams("flags.das", FLAG_RULES, shapes, src, tier_is_jit())
+//! every flagged shape's stream of `FLAG_RULES` over `src`, each checked against `want`
+def private check_flag_streams(t : T?; name, src : string; want : array<string>) {
+    let res <- shape_streams(name, FLAG_RULES, FLAG_SHAPES, src, tier_is_jit())
     t |> equal(res.issues, "")
-    let want <- ["1@1:1/b:a", "1@1:3/s:b", "1@1:9/s:d", "1@2:3/sb:e", "2@3:1/sb:#", "1@3:2/:f",
-                 "1@3:4/s:g", "3@3:5/:#", "1@3:6/:h", "4@3:8/s:!\n", "1@4:1/b:k", "1@5:1/sb:x",
-                 "1@6:3/sb:y", ""]
-    for (stream in res.streams) {
-        t |> equal(stream, want)
+    for (shape, stream in FLAG_SHAPES, res.streams) {
+        t |> equal(stream, want, shape)
     }
+}
+
+[test(description = "a flags lexer marks has_space on a token after skipped whitespace or a comment, at_bol on the first token of the input and of each line - after a skipped newline, one inside a skipped comment, or a token that ended its line; a rule body reads at_bol; every shape gives the same flags")]
+def test_token_flags(t : T?) {
+    check_flag_streams(t, "flags.das", "a b/*c*/d\n  e\n#f g#h !\nk\nx/*\n*/y",
+                       ["1@1:1/b:a", "1@1:3/s:b", "1@1:9/s:d", "1@2:3/sb:e", "2@3:1/sb:#", "1@3:2:f",
+                        "1@3:4/s:g", "3@3:5:#", "1@3:6:h", "4@3:8/s:!\n", "1@4:1/b:k", "1@5:1/sb:x",
+                        "1@6:3/sb:y", ""])
+}
+
+[test(description = "the first token after leading whitespace has has_space and at_bol, and so does one after leading newlines")]
+def test_token_flags_leading_space(t : T?) {
+    check_flag_streams(t, "flags_lead.das", "  a b", ["1@1:3/sb:a", "1@1:5/s:b", ""])
+    check_flag_streams(t, "flags_lead_nl.das", "\n\n#a", ["2@3:1/sb:#", "1@3:2:a", ""])
+}
+
+[test(description = "a token right after one that spans lines shares its last line, so it is not at_bol; a newline after a multi-line token puts the next one at the start of a line")]
+def test_token_flags_multiline_token(t : T?) {
+    check_flag_streams(t, "flags_multi.das", "a \"x\ny\"b \"\n\"\nc",
+                       ["1@1:1/b:a", "5@1:3/s:\"x\ny\"", "1@2:3:b", "5@2:5/s:\"\n\"", "1@4:1/sb:c", ""])
+}
+
+[test(description = "at_bol survives a later skip on the same line: a skipped newline then a comment, a token that ended its line then a space")]
+def test_bol_kept_over_same_line_skip(t : T?) {
+    check_flag_streams(t, "flags_keep.das", "a\n/*c*/ b !\n x",
+                       ["1@1:1/b:a", "1@2:7/sb:b", "4@2:9/s:!\n", "1@3:2/sb:x", ""])
 }
 
 //! a word rule whose body reads `has_space` to choose its kind, and spaces skipped
@@ -950,31 +983,62 @@ let private SPACE_READ_RULES = %stringify~
 
 [test(description = "a rule body reads has_space already set for its own token: the word after a skipped space sees it, the first word does not; every shape gives the same kinds")]
 def test_has_space_in_rule_body(t : T?) {
-    var shapes := EXPLICIT_SHAPES
-    shapes |> push("")
-    let res <- shape_streams("flags_body.das", SPACE_READ_RULES, shapes, "a b", tier_is_jit())
+    let res <- shape_streams("flags_body.das", SPACE_READ_RULES, FLAG_SHAPES, "a b", tier_is_jit())
     t |> equal(res.issues, "")
     for (stream in res.streams) {
         t |> equal(stream, ["1@1:1/b:a", "2@1:3/s:b", ""])
     }
 }
 
-[test(description = "at_bol survives a later skip on the same line: a skipped newline then a comment, a token that ended its line then a space")]
-def test_bol_kept_over_same_line_skip(t : T?) {
-    var shapes := EXPLICIT_SHAPES
-    shapes |> push("")
-    let res <- shape_streams("flags_keep.das", FLAG_RULES, shapes, "a\n/*c*/ b !\n x", tier_is_jit())
-    t |> equal(res.issues, "")
-    for (stream in res.streams) {
-        t |> equal(stream, ["1@1:1/b:a", "1@2:7/sb:b", "4@2:9/s:!\n", "1@3:2/sb:x", ""])
+[flex(flags = true)]
+def flag_words(var lx : FlexLexer) : bool {
+    rule("[a-z]+") {
+        lx |> emit(1)
+    }
+    rule(" +") {
     }
 }
 
-[test(description = "flex_open starts a lexer reused on a second input with its first token at_bol and no has_space, though the first input ended in skipped text")]
+[test(description = "flex_open starts a flags lexer reused on a second input with its first token at_bol and no has_space, though the first input ended in skipped text")]
 def test_token_flags_reopen(t : T?) {
     var lx : FlexLexer
-    let first <- lex_tokens(lx, "a b ", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
+    let first <- lex_tokens(lx, "a b ", $(var l : FlexLexer) => flag_words(l), $(var l : FlexLexer) => flags_of(l.tok))
     t |> equal(first, ["b", "s"])
-    let second <- lex_tokens(lx, "c ", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
+    let second <- lex_tokens(lx, "c ", $(var l : FlexLexer) => flag_words(l), $(var l : FlexLexer) => flags_of(l.tok))
     t |> equal(second, ["b"])
+}
+
+[test(description = "a lexer that does not ask for the flags leaves has_space and at_bol false on every token, a lexer opened after a flags lexer too")]
+def test_unflagged_tokens_carry_no_flags(t : T?) {
+    var lx : FlexLexer
+    let flagged <- lex_tokens(lx, " a\nb", $(var l : FlexLexer) => flag_words_nl(l), $(var l : FlexLexer) => flags_of(l.tok))
+    t |> equal(flagged, ["sb", "sb"])
+    let plain <- lex_tokens(lx, " if\n x  \"s\"\n7", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
+    t |> equal(plain, ["", "", "", ""])
+}
+
+[flex(flags = true)]
+def flag_words_nl(var lx : FlexLexer) : bool {
+    rule("[a-z]+") {
+        lx |> emit(1)
+    }
+    rule("[ \\n]+") {
+    }
+}
+
+[test(description = "a lexer that does not ask for the flags, or asks for none, generates a scanner that names no flag and no field the flags are derived from; one that asks writes them")]
+def test_unflagged_scanner_shape(t : T?) {
+    let rules = replace(FLAG_RULES, "lx.tok.at_bol ? 2 : 3", "3")
+    for (shape in ["", "mode = \"goto\"", "flags = false"]) {
+        let plain = scanner_text("plain.das", rules, shape)
+        t |> success(find(plain, "while") >= 0, plain)
+        for (name in ["has_space", "at_bol", "prev_end"]) {
+            t |> success(find(plain, name) < 0, "{shape}: {name}")
+        }
+    }
+    t |> equal(scanner_text("plain.das", rules, ""), scanner_text("plain_false.das", rules, "flags = false"))
+    let flagged = scanner_text("flagged.das", rules, "flags = true")
+    for (name in ["has_space", "at_bol", "prev_end", "prev_end_line"]) {
+        t |> success(find(flagged, name) >= 0, name)
+    }
 }

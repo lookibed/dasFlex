@@ -68,8 +68,9 @@ def compile_issues(name, text : string; jit_policy : bool = false) : string =>
     compile_virtual(name, text, jit_policy, false) $(_program) => ""
 
 //! the scanner driver of a stamped module: `run(shape, src, out)` lexes `src` with lexer `lex<shape>`
-//! and writes `kind@line:col/flags:text` per token - `flags` as `flags_of` writes them - the error
-//! text, then what the rule bodies pushed to `rule_log`, joined by `\x1F`
+//! and writes `kind@line:col:text` per token - `kind@line:col/flags:text` when a flag is set, `flags` as
+//! `flags_of` writes them - the error text, then what the rule bodies pushed to `rule_log`, joined
+//! by `\x1F`
 let private STAMP_RUN = %stringify~
 var private rule_log : array<string>
 [export]
@@ -80,7 +81,8 @@ def run(shape : int; src : string; var out : string?) {
     var toks : array<string>
     while (lex_by(shape, lx)) {
         let flags = "{lx.tok.has_space ? "s" : ""}{lx.tok.at_bol ? "b" : ""}"
-        toks |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}/{flags}:{text(lx)}")
+        let mark = empty(flags) ? "" : "/" + flags
+        toks |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}{mark}:{text(lx)}")
     }
     toks |> push(lx.err)
     toks |> push_from(rule_log)
@@ -102,6 +104,18 @@ def stamped_module(rules : string; shapes : array<string>) : string {
             w |> write("shape == {i} ? lex{i}(lx) : ")
         }
         w |> write("false\n\}\n{STAMP_RUN}")
+    }
+}
+
+//! `describe` of the body `[flex(shape)]` generates for `rules`, compiled as the virtual file `name`;
+//! the compile issues when it does not compile
+def scanner_text(name, rules, shape : string) : string {
+    return compile_virtual(name, stamped_module(rules, [shape]), false, false) $(program) {
+        var text = ""
+        program.getThisModule |> for_each_function("lex0") $(fn) {
+            text = describe(fn.body)
+        }
+        return text
     }
 }
 
