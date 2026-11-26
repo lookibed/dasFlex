@@ -29,7 +29,8 @@ struct FlexSymbols {
 }
 
 //! An interner whose table starts with `capacity` slots, rounded up
-//! to a power of two and at least 2; it doubles when half full.
+//! to a power of two and at least 2; it doubles when more than half
+//! full.
 def flex_symbols(capacity : int = 64) : FlexSymbols {
     var syms : FlexSymbols
     var cap = 2
@@ -154,13 +155,11 @@ def symbol_text(var syms : FlexSymbols; id : int) : string {
         syms.names |> resize(id + 1)
     }
     if (empty(syms.names[id]) && ent.len > 0) {
-        var bytes : array<uint8>
-        bytes |> resize(ent.len)
         unsafe {
-            memcpy(addr(bytes[0]), reinterpret<void?>(syms.src + ent.start), ent.len)
+            map_to_ro_array(reinterpret<void?>(syms.src + ent.start), ent.len) $(v : array<uint8>#) {
+                syms.names[id] = slice(v, 0, ent.len)
+            }
         }
-        syms.names[id] = string(bytes)
-        delete bytes
     }
     return syms.names[id]
 }

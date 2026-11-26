@@ -232,7 +232,7 @@ rather than at flex's inner `%%`.
 
 `flex/flex_symbols.das` turns a name into a small integer without building its string.
 `FlexSymbols` is an open-addressing table - linear probing over a power-of-two number of slots,
-doubled when half full - of entries that hold where the name's bytes are (a span of the source,
+doubled when more than half full - of entries that hold where the name's bytes are (a span of the source,
 or a string the interner keeps), its length, a 64-bit key, a 32-bit hash and the token kind the
 name carries. A name of at most 8 bytes is its key: its bytes packed, which with the length tell
 it from every other name, so a lookup compares integers and reads no byte of either name. A longer
@@ -241,7 +241,11 @@ multiplies the key - and, for a longer name, each 8-byte word before the last - 
 golden ratio and keeps the high half: a name of up to 8 bytes costs one multiplication and no loop.
 A hit allocates nothing; a miss appends an entry that points into the source, copying no byte.
 `symbol_text` builds a symbol's string on its first call and keeps it, so a parser pays one string
-per distinct name it asks for, and a scan that only classifies names pays none.
+per distinct name it asks for, and a scan that only classifies names pays none. The interner is not
+the `SetIndex` of the table builder: that one numbers sets the builder owns as int arrays, needs a
+lookup that does not add, and runs at build time, while the interner compares borrowed byte spans on
+the scanner's hot path; nor is it `daslib/flat_hash_table`, whose keys compare by value `==`, so a
+span would have to become a string - an allocation per lookup - to be its key.
 
 A kind per symbol stands where a string-keyed table stood: the C example interns its keywords with
 their kinds before the first token (`c_symbols`), `c_typedef` turns a name into a TYPEDEF_NAME, and

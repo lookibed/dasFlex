@@ -46,7 +46,7 @@ def test_hit_allocates_nothing(t : T?) {
     t |> equal(string_heap_allocation_count() - strings0, 0ul)
 }
 
-[test(description = "a table of two slots takes many names: it doubles when half full, and every name keeps its symbol through each doubling")]
+[test(description = "a table of two slots takes many names: it doubles when more than half full, and every name keeps its symbol through each doubling")]
 def test_collisions_and_growth(t : T?) {
     var syms <- flex_symbols(2)
     t |> equal(length(syms.slots), 2)
@@ -58,6 +58,81 @@ def test_collisions_and_growth(t : T?) {
         t |> equal(intern_name(syms, w), i)
         t |> equal(symbol_text(syms, i), w)
     }
+}
+
+[test(description = "flex_symbols rounds its capacity up to a power of two; the default table and the one a first intern makes have 64 slots")]
+def test_capacity_defaults(t : T?) {
+    for (asked, slots in [3, 5, 100], [4, 8, 128]) {
+        var syms <- flex_symbols(asked)
+        t |> equal(length(syms.slots), slots, "{asked}")
+    }
+    var made <- flex_symbols()
+    t |> equal(length(made.slots), 64)
+    var lazy : FlexSymbols
+    intern_name(lazy, "x")
+    t |> equal(length(lazy.slots), 64)
+}
+
+[test(description = "the table doubles on the name past half full, not on the one that fills half: 32 names keep 64 slots, the 33rd doubles them")]
+def test_doubling_threshold(t : T?) {
+    var syms <- flex_symbols()
+    for (i in range(32)) {
+        intern_name(syms, "n{i}")
+    }
+    t |> equal(length(syms.slots), 64)
+    intern_name(syms, "n32")
+    t |> equal(length(syms.slots), 128)
+}
+
+[test(description = "names of 4 to 8 bytes whose first and last 4 bytes agree share a packed key, and the length tells them apart")]
+def test_packed_key_needs_length(t : T?) {
+    let names <- [for (len in range(4, 9)); repeat("a", len)]
+    var syms <- flex_symbols(2)
+    let ids <- [for (n in names); intern_name(syms, n)]
+    t |> equal(ids, [0, 1, 2, 3, 4])
+    t |> equal(syms.entries[0].key, syms.entries[4].key)
+    for (i, n in count(), names) {
+        t |> equal(intern_name(syms, n), i, n)
+    }
+}
+
+[test(description = "two names past 8 bytes with one hash, one length, one first byte and the same last 8 bytes are two symbols: the comparison reads every byte")]
+def test_long_name_compares_every_byte(t : T?) {
+    let a = "qjthsdrt_suffix_"
+    let b = "qwuztlgl_suffix_"
+    let src = "{a} {b}"
+    var syms <- flex_symbols(4)
+    let ia = intern_at(syms, src, 0, 16)
+    let ib = intern_at(syms, src, 17, 16)
+    t |> equal(syms.entries[ia].hash, syms.entries[ib].hash)
+    t |> success(ia != ib)
+    t |> equal(intern_name(syms, a), ia)
+    t |> equal(intern_name(syms, b), ib)
+}
+
+[test(description = "names whose hashes all land in the last slot are placed again through each doubling, the probe wrapping to slot 0, and stay found")]
+def test_rehash_wraps(t : T?) {
+    let names <- ["w1", "w30", "w40", "w79", "w83", "w86"]
+    var syms <- flex_symbols(2)
+    for (i, n in count(), names) {
+        t |> equal(intern_name(syms, n), i, n)
+    }
+    t |> equal(length(syms.slots), 16)
+    for (i, n in count(), names) {
+        t |> equal(int(syms.entries[i].hash) & 15, 15, n)
+        t |> equal(intern_name(syms, n), i, n)
+    }
+}
+
+[test(description = "the empty name's text is the empty string, as a span and after flex_symbols_detach")]
+def test_empty_name_text(t : T?) {
+    let src = "x"
+    var syms : FlexSymbols
+    let id = intern_at(syms, src, 0, 0)
+    t |> equal(symbol_text(syms, id), "")
+    flex_symbols_detach(syms)
+    t |> equal(symbol_text(syms, id), "")
+    t |> equal(intern_name(syms, ""), id)
 }
 
 [test(description = "two names of one length and one hash are two symbols: the bytes decide, not the hash - a short name by its packed bytes, a long one sharing its last 8 bytes by the comparison")]
