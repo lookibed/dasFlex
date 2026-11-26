@@ -8,7 +8,7 @@ require daslib/ast_boost
 
 //! `flex_jit_tier()`: true when the program being compiled runs under the JIT, a constant the
 //! compile folds, so `static_if` and field defaults pick a shape per tier
-[arch(at="../ARCHITECTURE.md#symbols"), call_macro(name="flex_jit_tier")]
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols"), call_macro(name="flex_jit_tier")]
 class FlexJitTier : AstCallMacro {
     def override visit(prog : ProgramPtr; mod : Module?; var expr : ExprCallMacro?) : ExpressionPtr {
         if (length(expr.arguments) != 0) {

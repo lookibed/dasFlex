@@ -46,7 +46,7 @@ def main() {
 - `lx |> intern()` in a rule body is the symbol of the token: a small integer found by the token's
   bytes, with no string built, also kept in `lx.tok.sym`. `lx.syms` carries a kind per symbol that a
   parser sets (`set_symbol_kind`) and a rule reads (`symbol_kind`), and `symbol_text` builds a
-  symbol's string once, on request (`ARCHITECTURE.md#symbols`).
+  symbol's string once, on request (`ARCHITECTURE_SYMBOLS.md#symbols`).
 - `lx |> group(n)` in a rule body is the text of capture group `n` of the token, `lx |> group_span(n)`
   its byte range in the input; the rule's regex runs once over the token on the first call, and only
   rules that call them pay for it (`ARCHITECTURE.md#groups`).
@@ -110,9 +110,10 @@ is the ledger's "Unicode in the C lexer". The C lexer in `examples/c_lexer` does
 The table predates identifiers as symbols: the identifier rule now interns the token's bytes and
 emits its symbol's kind, so neither the scan nor the token array builds a string per identifier
 (7 009 string allocations per count-only pass of doom_am_map.i before, none after). Under the JIT
-that takes 23-28% off the count-only rows and 19-23% off the token-array rows; under the
-interpreter, where the interner's hash and probe are daslang code in place of three native calls,
-the same rows take 13-25% and 15-26% longer (ledger: "Identifiers as symbols").
+that takes 19-28% off the count-only rows and 16-20% off the token-array rows. The interpreter
+looks a name up in a native table, the token ended with a zero byte in place, and keeps a copy of
+every new name; the count-only rows take 4-8% longer than with the string per identifier, the
+token-array rows 6-13% (ledger: "Identifiers as symbols").
 
 Install: `daspkg install github.com/lookibed/dasFlex`, then `require flex/flex_macro`.
 Run the tests from a daslang checkout: `daslang -load_module <dasFlex> dastest/dastest.das -- --test <dasFlex>/tests`.

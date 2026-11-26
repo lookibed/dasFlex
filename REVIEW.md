@@ -46,7 +46,13 @@ match - a pass for line and column - is a defect** - they count newlines on the 
 **A diff that makes `intern` build a string or allocate on a hit, that lets `flex_open` replace the
 input while the lexer's symbols still point into it, or that leaves in `tok.sym` a symbol no rule
 interned for the token, is a defect** - a symbol is found by its bytes and its string is built on
-request (`ARCHITECTURE.md#symbols`).
+request (`ARCHITECTURE_SYMBOLS.md#symbols`).
+
+**A diff that lets `intern(lx)` return with a byte of the lexer's input changed, that drops the zero
+byte `flex_open` keeps past the input, or that makes the probing and the native shape of
+`FlexSymbols` give different ids or texts for one sequence of names, is a defect** - the native
+shape ends the token with a zero in place and puts the byte back, and `tests/flex_symbols_tests.das`
+runs the interner's tests in both shapes (`ARCHITECTURE_SYMBOLS.md#symbols`).
 
 **A diff that changes `examples/c_lexer/c_lexer.das` so that its token stream over a preprocessed C
 file differs from the hand-written lexer in `c_lex_compare.das` (`--mode probe`) is a defect** - run

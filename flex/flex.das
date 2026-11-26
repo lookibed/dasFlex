@@ -133,7 +133,7 @@ def flex_group_span(var lx : FlexLexer; var re : Regex; index : int) : range {
 //! The symbol of the matched text, by its bytes and without a string;
 //! also kept as `tok.sym`. A native interner reads the text in place:
 //! the byte after the token is a zero while the table looks it up.
-[arch(at="../ARCHITECTURE.md#symbols"), inline]
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols"), inline]
 def intern(var lx : FlexLexer) : int {
     static_if (flex_jit_tier()) {
         if (lx.syms.shape != FlexSymbolsShape.native) {

@@ -87,7 +87,7 @@ let private ARENA_BLOCK = 16384
 //! the symbol of the name `p[0..len)`, added when it is not there:
 //! as the span at `start` of the source, or, when `start` is -1, as
 //! `name`
-[arch(at="../ARCHITECTURE.md#symbols")]
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols")]
 def private lookup_or_add(var syms : FlexSymbols; p : uint8 const?; len, start : int;
                           name : string) : int {
     if (empty(syms.slots)) {
@@ -165,7 +165,7 @@ def private place_all(var syms : FlexSymbols; cap : int) {
 //! `first` and did not settle it - a miss (-1), or a name holding a
 //! zero byte: the names sharing that prefix compared in full, the name
 //! added when none is it, its bytes copied into the arena.
-[arch(at="../ARCHITECTURE.md#symbols")]
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols")]
 def intern_unsettled(var syms : FlexSymbols; p : uint8 const?; len, first : int) : int {
     if (first >= 0) {
         var e = first
@@ -209,7 +209,7 @@ def intern_unsettled(var syms : FlexSymbols; p : uint8 const?; len, first : int)
 //! Native shape: the symbol of the `len` bytes at `p`, which a zero
 //! byte follows; found by one native lookup of the bytes up to the
 //! first zero, added when it is not there.
-[arch(at="../ARCHITECTURE.md#symbols"), inline]
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols"), inline]
 def intern_terminated(var syms : FlexSymbols; p : uint8 const?; len : int) : int {
     let first = syms.ids?[unsafe(reinterpret<string>(p))] ?? -1
     return first if (first >= 0 && syms.entries[first].plain_len == len)
@@ -220,7 +220,7 @@ def intern_terminated(var syms : FlexSymbols; p : uint8 const?; len : int) : int
 //! Probing, the symbol is a span of `src` - no string, no copy - valid
 //! while `src` is, and another source panics until
 //! `flex_symbols_detach`; native, the name is copied on a miss.
-[arch(at="../ARCHITECTURE.md#symbols"), inline]
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols"), inline]
 def intern(var syms : FlexSymbols; src : uint8 const?; start, len : int) : int {
     if (symbols_native(syms)) {
         if (length(syms.scratch) < len + 1) {
@@ -298,7 +298,7 @@ def symbol_text(var syms : FlexSymbols; id : int) : string {
 //! Every span's text copied into the interner, so the source may go
 //! and `intern` may read another one; ids and kinds stay. A native
 //! interner holds no span.
-[arch(at="../ARCHITECTURE.md#symbols")]
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols")]
 def flex_symbols_detach(var syms : FlexSymbols) {
     for (id in range(length(syms.entries))) {
         if (syms.entries[id].start >= 0) {

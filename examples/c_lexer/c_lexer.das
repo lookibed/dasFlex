@@ -185,7 +185,7 @@ def c_typedef(var syms : FlexSymbols; name : string) {
 
 //! the identifier rule's decision on the token: the kind of its
 //! symbol, found by its bytes
-[arch(at="../../ARCHITECTURE.md#symbols")]
+[arch(at="../../ARCHITECTURE_SYMBOLS.md#symbols")]
 def c_word_kind(var lx : FlexLexer) : int {
     if (lx.syms.fresh_kind != int(CTok.IDENTIFIER)) {
         c_symbols(lx.syms)
