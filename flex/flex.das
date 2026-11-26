@@ -6,6 +6,7 @@ module flex shared public
 
 require daslib/strings_boost
 require daslib/regex
+require flex/flex_symbols public
 
 // The scanner the generated code drives: input as raw bytes, a cursor, the token the last rule
 // emitted, and line/column kept by counting newlines in each consumed span. Matching and taking a
@@ -20,6 +21,7 @@ struct FlexToken {
     line : int
     col : int
     text : string       //!< the matched text once `text()` built it; "" until then
+    sym : int           //!< the symbol `intern(lx)` found; -1 if none
 }
 
 //! The scanner state.
@@ -36,6 +38,7 @@ struct FlexLexer {
     failed : bool               //!< a byte no rule accepts was met
     file : string
     symbols : table<string; int> //!< a parser's channel back into the lexer (C `typedef` names)
+    syms : FlexSymbols          //!< names by their bytes, a kind each
     err : string
     groups : array<range>       //!< the capture groups of one token, input offsets; -1 where absent
     groups_start : int          //!< the `tok.start` `groups` belong to
@@ -44,6 +47,7 @@ struct FlexLexer {
 
 //! Open `src` for scanning: the bytes are copied once, the string may go.
 def flex_open(var lx : FlexLexer; src : string; file : string = "") {
+    flex_symbols_detach(lx.syms)
     lx.bytes <- to_bytes(src)
     lx.len = length(lx.bytes)
     lx.data = lx.len > 0 ? unsafe(addr(lx.bytes[0])) : null
@@ -124,6 +128,15 @@ def flex_group_span(var lx : FlexLexer; var re : Regex; index : int) : range {
     return span.x < 0 ? range(0, 0) : span
 }
 
+//! The symbol of the matched text, by its bytes and without a string;
+//! also kept as `tok.sym`.
+[inline]
+def intern(var lx : FlexLexer) : int {
+    let id = intern(lx.syms, lx.data, lx.tok.start, lx.tok.len)
+    lx.tok.sym = id
+    return id
+}
+
 //! A length-bounded comparison of the matched text with `s`, no allocation.
 def text_is(lx : FlexLexer; s : string) : bool {
     return false if (length(s) != lx.tok.len)
@@ -186,6 +199,7 @@ def flex_consume(var lx : FlexLexer; start, len : int) {
     lx.tok.start = start
     lx.tok.len = len
     lx.tok.text = ""
+    lx.tok.sym = -1
     lx.tok.line = lx.line
     lx.tok.col = lx.col
     let stop = start + len

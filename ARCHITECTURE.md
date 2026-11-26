@@ -15,9 +15,12 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
 - `flex/flex_dfa.das` - the NFA to tables (`FlexTables`, `build_tables`, `flex_tables`): byte
   equivalence classes, subset construction, the rule an accepting state carries. Knows nothing of
   source code or macros.
+- `flex/flex_symbols.das` - the symbol interner (`FlexSymbols`, `intern`, `intern_name`,
+  `symbol_kind`, `symbol_text`, `flex_symbols_detach`): names as integers by their bytes. Knows
+  nothing of the lexer.
 - `flex/flex.das` - the run-time scanner state (`FlexLexer`, `FlexToken`), the actions a rule body
-  calls (`emit`, `begin`, `text`, `text_is`), the capture-group re-match behind `group` and
-  `group_span` (`flex_group`, `flex_group_span`, `flex_group_regex`), the error text
+  calls (`emit`, `begin`, `text`, `text_is`, `intern`), the capture-group re-match behind `group`
+  and `group_span` (`flex_group`, `flex_group_span`, `flex_group_regex`), the error text
   (`flex_error_text`), the UTF-8 lead bytes both the error text and `.` read (`UTF8_LEADS`), and
   the matcher and position tracking of the `matcher="call"` shape (`flex_match_table`,
   `flex_consume`). No regex, no AST.
@@ -231,6 +234,37 @@ rather than at flex's inner `%%`.
 C parser puts `typedef` names there and the identifier rule reads it to decide between
 `IDENTIFIER` and `TYPEDEF_NAME`. It is a field of the lexer, not a global, so two lexers never share
 it by accident.
+
+## Symbols by their bytes {#symbols}
+
+`flex/flex_symbols.das` turns a name into a small integer without building its string.
+`FlexSymbols` is an open-addressing table - linear probing over a power-of-two number of slots,
+doubled when half full - of entries that hold where the name's bytes are (a span of the source,
+or a string the interner keeps), its length, a 64-bit key, a 32-bit hash and the token kind the
+name carries. A name of at most 8 bytes is its key: its bytes packed, which with the length tell
+it from every other name, so a lookup compares integers and reads no byte of either name. A longer
+name's key is its last 8 bytes, and `memcmp` confirms a match on key, hash and length. The hash
+multiplies the key - and, for a longer name, each 8-byte word before the last - by 2^64 over the
+golden ratio and keeps the high half: a name of up to 8 bytes costs one multiplication and no loop.
+A hit allocates nothing; a miss appends an entry that points into the source, copying no byte.
+`symbol_text` builds a symbol's string on its first call and keeps it, so a parser pays one string
+per distinct name it asks for, and a scan that only classifies names pays none.
+
+A kind per symbol lets one lookup answer what a string-keyed table would: a parser interns its
+keywords with their kinds before the first token and changes a name's kind when it learns one
+(`set_symbol_kind`), and a rule emits the kind of the token's symbol.
+
+A span is only as good as its source. An interner reads one source at a time: the first span binds
+its pointer, and a span of another source panics while any entry still points into the first.
+`flex_symbols_detach` copies the text of every span into the interner and unbinds it; the ids and
+kinds stay. `flex_open` detaches the lexer's interner before it replaces the bytes, so a lexer
+reopened on another input keeps its symbols - a name of the first file is the same id in the
+second - for one string per distinct name of the first. An interner per source would be the
+cheaper contract and would lose those ids between the files a parser lexes in turn.
+
+`FlexLexer.syms` is a field of the lexer, not a global, so two lexers never share symbols by
+accident. `intern(lx)` interns the current token's span and keeps the id in `tok.sym`, which every
+scanner shape sets to -1 when it takes a token, so a token whose rule did not intern carries none.
 
 ## Unicode in the C lexer {#c-unicode}
 

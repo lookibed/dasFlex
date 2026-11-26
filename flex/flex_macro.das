@@ -567,6 +567,7 @@ def private make_token_set(lx : string) : array<ExpressionPtr> {
         $i(lx).tok.start = $i(lx).pos
         $i(lx).tok.len = flex`len
         $i(lx).tok.text = ""
+        $i(lx).tok.sym = -1
         $i(lx).tok.line = $i(lx).line
         $i(lx).tok.col = $i(lx).col
         if (flex`nl > 0) {
