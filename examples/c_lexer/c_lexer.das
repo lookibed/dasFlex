@@ -315,13 +315,15 @@ def c_pp_comment_close(var lx : FlexLexer) {
 }
 
 //! `flex_open` for C source: the keywords interned (`c_symbols`), a
-//! UTF-8 byte order mark at offset 0 skipped as clang and gcc skip it
+//! UTF-8 byte order mark at offset 0 skipped as clang and gcc skip it -
+//! not text, so the first token has no `has_space` for it
 def c_open(var lx : FlexLexer; src : string; file : string = "") {
     flex_open(lx, src, file)
     c_symbols(lx.syms)
     if (contains_utf8_bom(lx.bytes)) {
         lx.pos = 3
         lx.col = 4
+        lx.prev_end = 3
     }
 }
 

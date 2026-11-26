@@ -619,6 +619,16 @@ def test_pp_flags_block_comment(t : T?) {
                ["IDENTIFIER:a/b", "IDENTIFIER:b/s", "IDENTIFIER:c/sb"])
 }
 
+[test(description = "c_open skips a byte order mark at offset 0 as no text: the pp lexer's first token is at_bol without has_space, and one after a space has it")]
+def test_pp_flags_after_bom(t : T?) {
+    for (src, want in ["\xEF\xBB\xBFint x;", "\xEF\xBB\xBF int x;"], ["b", "sb"]) {
+        var lx : FlexLexer
+        c_open(lx, src)
+        t |> success(c_next_pp(lx))
+        t |> equal(flags_of(lx.tok), want, src)
+    }
+}
+
 [test(description = "the C pp lexer puts no # after a block comment that spans lines at the start of a line, unless the comment itself starts one")]
 def test_pp_hash_after_block_comment(t : T?) {
     t |> equal(pp_tokens("x /*\n*/ #define\n/* a\n */ #y"),
