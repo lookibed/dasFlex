@@ -939,6 +939,26 @@ def test_token_flags(t : T?) {
     }
 }
 
+//! a word rule whose body reads `has_space` to choose its kind, and spaces skipped
+let private SPACE_READ_RULES = %stringify~
+    rule("[a-z]+") {
+        lx |> emit(lx.tok.has_space ? 2 : 1)
+    }
+    rule(" +") {
+    }
+%%
+
+[test(description = "a rule body reads has_space already set for its own token: the word after a skipped space sees it, the first word does not; every shape gives the same kinds")]
+def test_has_space_in_rule_body(t : T?) {
+    var shapes := EXPLICIT_SHAPES
+    shapes |> push("")
+    let res <- shape_streams("flags_body.das", SPACE_READ_RULES, shapes, "a b", tier_is_jit())
+    t |> equal(res.issues, "")
+    for (stream in res.streams) {
+        t |> equal(stream, ["1@1:1/b:a", "2@1:3/s:b", ""])
+    }
+}
+
 [test(description = "at_bol survives a later skip on the same line: a skipped newline then a comment, a token that ended its line then a space")]
 def test_bol_kept_over_same_line_skip(t : T?) {
     var shapes := EXPLICIT_SHAPES

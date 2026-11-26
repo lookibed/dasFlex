@@ -1,7 +1,8 @@
 # dasFlex Code Review Checklist
 
 **Read `REVIEW_COMMON.md` (package root) first - its contract binds this checklist.** Architecture docs:
-`ARCHITECTURE.md` and its companion `ARCHITECTURE_SYMBOLS.md`, the symbol interner.
+`ARCHITECTURE.md` and its companions `ARCHITECTURE_SYMBOLS.md`, the symbol interner, and
+`ARCHITECTURE_TOKENS.md`, the token flags.
 
 **A diff under `flex/` that adds a `require` of a module other than one under `flex/`, one under
 `daslib/`, or a builtin module the daslang executable registers itself (such as `strings` or `math`)

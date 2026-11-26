@@ -5,6 +5,7 @@ require dastest/testing_boost public
 require daslib/fio
 require daslib/rtti
 require daslib/strings_boost
+require daslib/stringify
 require strings
 require math
 require _flex_test_helpers
@@ -344,6 +345,38 @@ def test_generated_variants_current(t : T?) {
     for (f in files) {
         t |> equal(replace(fread(f.path), "\r\n", "\n"), replace(f.text, "\r\n", "\n"), base_name(f.path))
     }
+}
+
+//! a rule list of numeric constants alone, ending with its newline: no start condition, no
+//! identifier rule
+let private NUMBERS_ONLY_RULES = %stringify~
+    rule("[0-9]+") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[0-9]+\\.[0-9]*") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+%%
+
+//! `pp_rule_lines` over `NUMBERS_ONLY_RULES`, PP_NUMBER stamped as kind 1 and PP_OTHER as 2, lexing
+//! `src`: the issues, or "" and the stream as `shape_streams` writes it
+def private numbers_only_pp_stream(src : string) : tuple<issues : string; streams : array<array<string>>> {
+    let rules = replace(replace(pp_rule_lines(NUMBERS_ONLY_RULES), "CTok.PP_NUMBER", "1"), "CTok.PP_OTHER", "2")
+    return <- shape_streams("numbers_only_pp.das", rules, [""], src, tier_is_jit())
+}
+
+[test(description = "pp_rule_lines appends the catch-all PP_OTHER rule at the end of a rule list that ends with its newline and holds no start condition")]
+def test_pp_rule_lines_other_at_end(t : T?) {
+    let res <- numbers_only_pp_stream("12@")
+    t |> equal(res.issues, "")
+    t |> equal(res.streams[0], ["1@1:1/b:12", "2@1:3/:@", ""])
+}
+
+[test(description = "pp_rule_lines over rules with no extended identifier rule gives the pp-number no identifier-continue characters: 1$ is a pp-number and a PP_OTHER")]
+def test_pp_rule_lines_no_ident_continue(t : T?) {
+    let res <- numbers_only_pp_stream("1$")
+    t |> equal(res.issues, "")
+    t |> equal(res.streams[0], ["1@1:1/b:1", "2@1:2/:$", ""])
 }
 
 //! `kind symbol` of every token of `src`, `typedef_names` declared
