@@ -222,9 +222,50 @@ struct CodepointText {
 def private byte_items(lo, hi : int) : string =>
     lo == hi ? "\\x{fmt(":02X", lo)}" : "\\x{fmt(":02X", lo)}-\\x{fmt(":02X", hi)}"
 
-//! the byte-set sequences matching exactly the UTF-8 encodings of `lo..hi`, a range of one encoded
-//! length or more and no surrogate: split until every byte position is one contiguous byte range
-def private utf8_sequences(lo, hi : int; var out : array<string>) {
+//! byte-range sequences sharing their prefixes: node 0 is the root, `kids[i]` the nodes after node
+//! `i`, each reading the bytes `bytes[k]`
+struct private ByteTrie {
+    bytes : array<int2>
+    kids : array<array<int>>
+}
+
+//! `seq` added to `trie`, every step down an existing node whose range is the same
+def private trie_insert(var trie : ByteTrie; seq : array<int2>) {
+    if (empty(trie.kids)) {
+        trie.bytes |> push(int2(-1, -1))
+        trie.kids |> resize(length(trie.bytes))
+    }
+    var at = 0
+    for (r in seq) {
+        var next = -1
+        for (k in trie.kids[at]) {
+            if (trie.bytes[k] == r) {
+                next = k
+                break
+            }
+        }
+        if (next < 0) {
+            next = length(trie.bytes)
+            trie.bytes |> push(r)
+            trie.kids |> resize(length(trie.bytes))
+            trie.kids[at] |> push(next)
+        }
+        at = next
+    }
+}
+
+//! the bytes of node `k` and every way on from it, as `daslib/regex` text
+def private trie_branch(trie : ByteTrie; k : int) : string {
+    let r = trie.bytes[k]
+    var inscope tail <- [for (c in trie.kids[k]); trie_branch(trie, c)]
+    let rest = length(tail) == 1 ? tail[0] : empty(tail) ? "" : "(?:{join(tail, "|")})"
+    return "[{byte_items(r.x, r.y)}]{rest}"
+}
+
+//! the byte-range sequences matching exactly the UTF-8 encodings of `lo..hi`, a range of one encoded
+//! length or more and no surrogate, added to `trie`: split until every byte position is one
+//! contiguous byte range
+def private utf8_sequences(lo, hi : int; var trie : ByteTrie) {
     var stack : array<int2>
     stack |> push(int2(lo, hi))
     while (!empty(stack)) {
@@ -254,7 +295,7 @@ def private utf8_sequences(lo, hi : int; var out : array<string>) {
         }
         var inscope a <- utf8_encode(uint(r.x))
         var inscope b <- utf8_encode(uint(r.y))
-        out |> push(join([for (i in range(length(a))); "[{byte_items(int(a[i]), int(b[i]))}]"], ""))
+        trie_insert(trie, [for (i in range(length(a))); int2(int(a[i]), int(b[i]))])
     }
 }
 
@@ -293,16 +334,22 @@ def private codepoint_ranges(var ranges : array<int2>; negate : bool) : array<in
     return <- out
 }
 
-//! a set of code points as `daslib/regex` text: one byte set for the ASCII part and a byte-set
-//! sequence per UTF-8 shape for the rest, in one non-capturing group
+//! a set of code points as `daslib/regex` text: one byte set for the ASCII part and the byte-set
+//! sequences of the rest as a trie, sequences sharing a prefix sharing its sets, in one
+//! non-capturing group
+[arch(at="../ARCHITECTURE.md#code-points")]
 def private codepoint_set_text(ranges : array<int2>) : string {
     var alts : array<string>
     let ascii = join([for (r in ranges); byte_items(r.x, min(r.y, int(0x7F))); where r.x < 0x80], "")
     if (!empty(ascii)) {
         alts |> push("[{ascii}]")
     }
+    var trie : ByteTrie
     for (r in ranges) {
-        utf8_sequences(max(r.x, int(0x80)), r.y, alts) if (r.y >= 0x80)
+        utf8_sequences(max(r.x, int(0x80)), r.y, trie) if (r.y >= 0x80)
+    }
+    if (!empty(trie.kids)) {
+        alts |> push_from([for (k in trie.kids[0]); trie_branch(trie, k)])
     }
     return empty(alts) ? "(?:[^\\x00-\\xFF])" : "(?:{join(alts, "|")})"
 }
