@@ -8,8 +8,9 @@ for a name is the companion `ARCHITECTURE_SYMBOLS.md`.
 
 A lexer that asks for them - `[flex(flags = true)]`, or `%option flags` in the reader - gives every
 token two flags a C preprocessor reads, named as chibicc's tokenizer names them: `has_space`, true
-when text was skipped since the previous token - whitespace, a comment, any match whose rule did not
-emit - and `at_bol`, true for the first token of the input and for a token that a newline separates
+when any skipped text lies between the previous token and this one - whitespace, a comment, a match
+whose rule did not emit; a rule that moves the cursor back over its own match skips nothing - and
+`at_bol`, true for the first token of the input and for a token that a newline separates
 from the previous one. The newline counts when skipped text holds it or when the previous token ends
 with it; a newline inside the previous token followed by more of its bytes does not, since the next
 token then shares that token's last line.
@@ -21,13 +22,16 @@ the cursor's line after it, or the line before when that byte is a newline. `has
 first token is `at_bol` whatever text precedes it. The two are written at the head of every rule body
 that is not empty, before its own statements, so a body reads them (a `#` rule deciding on a
 directive); an empty body can neither read them nor emit, so a skipped span of whitespace pays
-nothing. A rule that emits stores the two fields as it hands the token out. Nothing runs per byte,
+nothing. Every exit that hands a token out stores the two fields: the end of a rule that emitted,
+and a rule body's own `return` of a value that may be true. Nothing runs per byte,
 and every scanner shape - each `mode`, `matcher` and `dispatch` - shares the code and gives the same
 flags.
 
 A lexer that does not ask generates the scanner it would without the flags, node for node: nothing
 writes a flag or the two fields, so `has_space` and `at_bol` stay false from `flex_open` on and the
-flags cost it nothing. The fields sit at the ends of `FlexToken` and `FlexLexer`, where they move no
+flags cost it nothing. Its rule body reading `lx.tok.has_space` or `lx.tok.at_bol` fails the
+compile, as does an annotation argument the annotation does not take or one given twice, so a
+misspelled or dropped opt-in cannot leave the flags false unseen. The fields sit at the ends of `FlexToken` and `FlexLexer`, where they move no
 field the scanner reads.
 
 The scanner cannot tell a comment from other skipped text, so a newline inside a block comment would

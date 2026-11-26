@@ -134,6 +134,12 @@ def test_option_flags(t : T?) {
     t |> equal(plain, ["", ""])
 }
 
+[test(description = "a reader action reading lx.tok.at_bol without %option flags fails the compile, naming the flag and %option flags")]
+def test_flag_read_needs_option(t : T?) {
+    let issues = compile_issues("no_flags.das", reader_module("", "[a-z]+  \{ emit(lx.tok.at_bol ? 2 : 1) \}\n"))
+    t |> success(find(issues, "[flex_text] the rule body reads lx.tok.at_bol but the lexer does not ask for the flags: add %option flags") >= 0, issues)
+}
+
 [test(description = "%x hides the default rules, %s keeps them, <*> and <A,B> list the conditions a rule is active in")]
 def test_start_conditions(t : T?) {
     t |> run("exclusive") @(t : T?) {
@@ -278,7 +284,7 @@ def test_reader_refusals(t : T?) {
          "%option takes mode=, dispatch=, matcher= and flags, not speed=fast", 7),
         (reader_module("D  [0-9] x\n", "a\n"), "a definition is `NAME regex`, one pattern", 7),
         (reader_module("%y C\n", "a\n"),
-         "a definition is `%x NAMES`, `%s NAMES`, `%option key=value` or `NAME regex`", 7),
+         "a definition is `%x NAMES`, `%s NAMES`, `%option key=value`, `%option flags` or `NAME regex`", 7),
         ("options gen2\nrequire flex/flex_macro\n%flex~ bad\nD  [0-9]\n%%\n",
          "the rules section starts at a line `%rules`", 5)]
     for (i, c in count(), cases) {

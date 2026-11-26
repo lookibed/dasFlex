@@ -51,13 +51,15 @@ def main() {
   its byte range in the input; the rule's regex runs once over the token on the first call, and only
   rules that call them pay for it (`ARCHITECTURE.md#groups`).
 - `[flex(flags = true)]` (`%option flags` in the reader) gives every token the two flags a C
-  preprocessor reads: `lx.tok.has_space`, set when skipped text - whitespace, a comment, any rule
-  that did not emit - came before it, and `lx.tok.at_bol`, set for the first token of the input and
+  preprocessor reads: `lx.tok.has_space`, set when any skipped text - whitespace, a comment, a
+  match whose rule did not emit - lies between it and the previous token (a rule that moves the
+  cursor back over its match skips nothing), and `lx.tok.at_bol`, set for the first token of the input and
   for a token a newline separates from the previous one - in skipped text, or ending that token; the
   token right after a multi-line token, such as a string of a language that allows one, shares its
   last line and is not `at_bol`. They are set before a rule body runs, so the body may read them,
   and cost no work per byte and none for a skipping rule with an empty body; a lexer that does not
-  ask leaves them false and pays nothing (`ARCHITECTURE_TOKENS.md#pp-flags`). The C pp lexer keeps a
+  ask leaves them false and pays nothing, and its rule body reading them fails the compile
+  (`ARCHITECTURE_TOKENS.md#pp-flags`). The C pp lexer keeps a
   block comment one space, as C11 phase 3 has it: a newline inside the comment does not set
   `at_bol`. Unlike chibicc, `has_space` stays set across a newline, as gcc and clang keep it.
   `examples/c_lexer/c_lexer_pp.das` is the C11 lexer as preprocessing tokens

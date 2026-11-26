@@ -42,6 +42,8 @@ struct private FlexSpec {
     inclusive : array<bool>
     err : string
     err_site : Expression const?
+    flag_read : string                //!< the first token flag a rule body reads
+    flag_site : Expression const?
 }
 
 //! `begin(lx, "NAME")` in a rule body becomes `begin(lx, <index>)`; `emit(lx, kind)` becomes the two
@@ -61,6 +63,18 @@ class private ActionRewrite : AstVisitor {
     group_re : string
     uses_groups : bool
     group_max : int                 //!< the highest constant group index the rule asks for
+    flag_read : string              //!< the first `lx.tok.has_space` or `lx.tok.at_bol` a rule body reads
+    flag_site : Expression const?
+    def override visitExprField(var expr : ExprField?) : ExpressionPtr {
+        if (empty(flag_read) && (expr.name == "has_space" || expr.name == "at_bol") && expr.value is ExprField) {
+            let tok = expr.value as ExprField
+            if (tok.name == "tok" && is_lexer(tok.value)) {
+                flag_read = string(expr.name)
+                flag_site = expr
+            }
+        }
+        return <- expr
+    }
     def override visitExprCall(var expr : ExprCall?) : ExpressionPtr {
         let is_group = expr.name == "group" || expr.name == "group_span"
         if (implicit_lexer && length(expr.arguments) == 1) {
@@ -191,6 +205,10 @@ def private collect_rule(var spec : FlexSpec; call : ExprCall?; nargs : int; con
     }
     if (!empty(rw.err)) {
         fail_at(spec, rw.err, rw.err_site)
+    }
+    if (empty(spec.flag_read) && !empty(rw.flag_read)) {
+        spec.flag_read = rw.flag_read
+        spec.flag_site = rw.flag_site
     }
     if (rw.uses_groups) {
         check_groups(spec, r.pattern, rw.group_max, call)
@@ -635,22 +653,59 @@ def private make_take(lx, mode, matcher : string) : array<ExpressionPtr> {
     }
 }
 
-//! the end of a rule that emitted: the token is handed out; a `flags` lexer first keeps where it
-//! ended - the offset, and the line of its last byte, the one before the cursor's when that byte
-//! is a newline
+//! where the token handed out ended, kept by a `flags` lexer: the offset, and the line of its last
+//! byte, the one before the cursor's when that byte is a newline
 [arch(at="../ARCHITECTURE_TOKENS.md#pp-flags")]
+def private make_end_store(lx : string) : array<ExpressionPtr> {
+    return <- qmacro_block_to_array() {
+        $i(lx).prev_end = $i(lx).pos
+        $i(lx).prev_end_line = $i(lx).col == 1 ? $i(lx).line - 1 : $i(lx).line
+    }
+}
+
+//! the end of a rule that emitted: the token is handed out, a `flags` lexer keeping where it ended
 def private make_done(lx : string; flags : bool) : array<ExpressionPtr> {
     if (!flags) {
         return <- qmacro_block_to_array() {
             return true if ($i(lx).emitted)
         }
     }
+    var stores <- make_end_store(lx)
     return <- qmacro_block_to_array() {
         if ($i(lx).emitted) {
-            $i(lx).prev_end = $i(lx).pos
-            $i(lx).prev_end_line = $i(lx).col == 1 ? $i(lx).line - 1 : $i(lx).line
+            $b(stores)
             return true
         }
+    }
+}
+
+//! a rule body's own `return` of a `flags` lexer: one that may return true hands the token out, so it
+//! keeps where the token ended first, as `make_done` does; a return inside a block or lambda of the
+//! body is that block's
+[arch(at="../ARCHITECTURE_TOKENS.md#pp-flags")]
+class private ReturnStore : AstVisitor {
+    lx : string
+    in_block : int
+    def override preVisitExprMakeBlock(expr : ExprMakeBlock?) {
+        in_block++
+    }
+    def override visitExprMakeBlock(var expr : ExprMakeBlock?) : ExpressionPtr {
+        in_block--
+        return <- expr
+    }
+    def override visitExprReturn(var expr : ExprReturn?) : ExpressionPtr {
+        return <- expr if (in_block > 0 || expr.subexpr == null)
+        var stores <- make_end_store(lx)
+        var handed = qmacro_block() {
+            if ($e(expr.subexpr)) {
+                $b(stores)
+                return true
+            }
+            return false
+        }
+        mark_generated(handed)
+        handed |> force_at(expr.at)
+        return handed
     }
 }
 
@@ -667,6 +722,23 @@ def private add_flag_reads(var spec : FlexSpec; lx : string) {
         for (i in range(length(reads))) {
             mark_generated(reads[i])
             arm.body |> emplace(reads[i], i)
+        }
+    }
+}
+
+//! every `return` a `flags` lexer's rule bodies make through `ReturnStore`
+def private store_on_return(var spec : FlexSpec; lx : string) {
+    var rs = new ReturnStore(lx = lx)
+    defer() {
+        unsafe {
+            delete rs
+        }
+    }
+    make_visitor(*rs) $(adapter) {
+        for (arm in spec.arms) {
+            for (st in arm.body) {
+                visit_expression(st, adapter)
+            }
         }
     }
 }
@@ -723,8 +795,28 @@ struct private FlexShape {
     err : string
 }
 
+//! an argument `[tag]` does not take, or one given twice: either would leave a choice unmade unseen
+def private argument_error(args : AnnotationArgumentList; tag : string) : string {
+    var known <- ["mode", "dispatch", "matcher", "flags"]
+    if (tag == "flex_text") {
+        known |> push_from(["tokens", "conditions"])
+    }
+    var seen : array<string>
+    for (a in args) {
+        let name = string(a.name)
+        if (!has_value(known, name)) {
+            return "[{tag}] unknown argument `{name}`; the arguments are {join(known, ", ")}"
+        }
+        return "[{tag}] argument `{name}` given twice" if (has_value(seen, name))
+        seen |> push(name)
+    }
+    return ""
+}
+
 [arch(at="../ARCHITECTURE.md#two-shapes")]
-def private flex_shape(args : AnnotationArgumentList) : FlexShape {
+def private flex_shape(args : AnnotationArgumentList; tag : string) : FlexShape {
+    let bad_arg = argument_error(args, tag)
+    return FlexShape(err = bad_arg) if (!empty(bad_arg))
     let mode = string_arg(args, "mode", compiling_program().policies.jit_enabled ? "goto" : "table")
     var shape = FlexShape(mode = mode,
                           dispatch = string_arg(args, "dispatch", mode == "table" ? "goto" : "if"),
@@ -796,7 +888,7 @@ def private flex_apply(var func : FunctionPtr; args : AnnotationArgumentList; ta
         errors := "[{tag}] takes one argument: var lx : FlexLexer"
         return false
     }
-    let shape = flex_shape(args)
+    let shape = flex_shape(args, tag)
     if (!empty(shape.err)) {
         errors := shape.err
         return false
@@ -804,7 +896,13 @@ def private flex_apply(var func : FunctionPtr; args : AnnotationArgumentList; ta
     var spec = FlexSpec(func_name = string(func.name))
     let lx = string(func.arguments[0].name)
     invoke(collect, spec, lx)
-    add_flag_reads(spec, lx) if (shape.flags)
+    if (shape.flags) {
+        add_flag_reads(spec, lx)
+        store_on_return(spec, lx)
+    } elif (!empty(spec.flag_read)) {
+        let ask = tag == "flex_text" ? "%option flags" : "flags = true"
+        fail_at(spec, "[{tag}] the rule body reads {lx}.tok.{spec.flag_read} but the lexer does not ask for the flags: add {ask}", spec.flag_site)
+    }
     return flex_generate(func, spec, shape, errors)
 }
 

@@ -332,7 +332,7 @@ def private definition_line(var s : RScan; var out : Definitions; line : string)
             out.defs[head] = re
         }
     } else {
-        fail(s, "a definition is `%x NAMES`, `%s NAMES`, `%option key=value` or `NAME regex`")
+        fail(s, "a definition is `%x NAMES`, `%s NAMES`, `%option key=value`, `%option flags` or `NAME regex`")
     }
 }
 
