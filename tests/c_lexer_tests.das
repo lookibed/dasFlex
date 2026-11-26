@@ -486,12 +486,8 @@ def test_lexed_owns_span_bytes(t : T?) {
 //! every preprocessing token of `src`, `NAME:text/flags`
 def private pp_tokens(src : string) : array<string> {
     var lx : FlexLexer
-    c_open(lx, src)
-    var out : array<string>
-    while (c_next_pp(lx)) {
-        out |> push("{c_token_name(lx.tok.kind)}:{text(lx)}/{flags_of(lx)}")
-    }
-    return <- out
+    return <- lex_tokens(lx, src, $(var l : FlexLexer) => c_next_pp(l),
+                         $(var l : FlexLexer) => "{c_token_name(l.tok.kind)}:{text(l)}/{flags_of(l.tok)}")
 }
 
 [test(description = "the C pp lexer takes a pp-number of C11 6.4.8 whole: exponent signs after e, E, p and P, a leading dot, letters and dots after the digits")]
@@ -566,7 +562,7 @@ def test_flags_every_c_shape(t : T?) {
         var lx : FlexLexer
         let scan = c_scanner(shape)
         var inscope out <- lex_tokens(lx, src, $(var l : FlexLexer) => invoke(scan, l),
-                                      $(var l : FlexLexer) => "{text(l)}/{flags_of(l)}")
+                                      $(var l : FlexLexer) => "{text(l)}/{flags_of(l.tok)}")
         t |> equal(out, ["int/b", "a/s", ";/", "b/sb", "c/s", "d/sb", "f/sb"], shape)
     }
 }
@@ -577,12 +573,15 @@ def test_pp_hash_after_block_comment(t : T?) {
                ["IDENTIFIER:x/b", "#:#/s", "IDENTIFIER:define/", "#:#/sb", "IDENTIFIER:y/"])
 }
 
-[test(description = "lex_unfiltered lexes --mode pp once with no filter: a GNU extension the filter drops stays, each token keeps its flags and an identifier its text")]
+[test(description = "lex_filtered lexes --mode pp once with no filter: a GNU extension the filter drops stays, each token keeps its flags and an identifier its text; dump_line adds the flag columns in pp mode only")]
 def test_compare_pp_unfiltered(t : T?) {
     var inscope typedefs : table<string; int>
     var rules : array<ReRule>
-    var inscope res <- lex_unfiltered("pp", "#if X\n1.e+2 __attribute__((x))", typedefs, rules)
-    t |> equal([for (tk in res.toks); "{c_token_name(tk.kind)}:{tk.text}/{tk.has_space ? "s" : ""}{tk.at_bol ? "b" : ""}"],
-               ["#:#/b", "IDENTIFIER:if/", "IDENTIFIER:X/s", "PP_NUMBER:1.e+2/sb", "IDENTIFIER:__attribute__/s", "(:(/", "(:(/",
-                "IDENTIFIER:x/", "):)/", "):)/"])
+    var inscope res <- lex_filtered("pp", "#if X\n1.e+2 __attribute__((x))", typedefs, rules)
+    t |> equal([for (tk in res.toks); dump_line(tk, true)],
+               ["#\t#\t1\t-\tbol", "IDENTIFIER\tif\t1\t-\t-", "IDENTIFIER\tX\t1\tspace\t-",
+                "PP_NUMBER\t1.e+2\t2\tspace\tbol", "IDENTIFIER\t__attribute__\t2\tspace\t-", "(\t(\t2\t-\t-",
+                "(\t(\t2\t-\t-", "IDENTIFIER\tx\t2\t-\t-", ")\t)\t2\t-\t-", ")\t)\t2\t-\t-"])
+    t |> equal(res.typedef_count, 0)
+    t |> equal(dump_line(res.toks[2], false), "IDENTIFIER\tX\t1")
 }

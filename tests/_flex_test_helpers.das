@@ -36,8 +36,8 @@ def lex_tokens(var lx : FlexLexer; src : string; scan : block<(var lx : FlexLexe
     return <- out
 }
 
-//! the token's flags: `s` for `has_space`, `b` for `at_bol`
-def flags_of(lx : FlexLexer) : string => "{lx.tok.has_space ? "s" : ""}{lx.tok.at_bol ? "b" : ""}"
+//! a token's flags, of any token type with `has_space` and `at_bol`: `s` for the one, `b` for the other
+def flags_of(tok) : string => "{tok.has_space ? "s" : ""}{tok.at_bol ? "b" : ""}"
 
 //! compiles `text` as the virtual file `name` - for the JIT tier's choices when `jit_policy`,
 //! JIT-compiled when `jit` - and hands a program that compiled to `blk`: "" when it compiled and

@@ -942,8 +942,8 @@ def test_token_flags(t : T?) {
 [test(description = "flex_open starts a lexer reused on a second input with its first token at_bol and no has_space")]
 def test_token_flags_reopen(t : T?) {
     var lx : FlexLexer
-    let first <- lex_tokens(lx, "a b", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l))
+    let first <- lex_tokens(lx, "a b", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
     t |> equal(first, ["b", "s"])
-    let second <- lex_tokens(lx, "c ", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l))
+    let second <- lex_tokens(lx, "c ", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
     t |> equal(second, ["b"])
 }

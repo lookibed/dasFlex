@@ -584,31 +584,36 @@ struct Filtered {
     typedef_count : int
 }
 
+//! the tokens of the lexer `mode` names, the identifier texts resolved
+def lex_resolved(mode : string; text : string; typedefs : table<string; int>;
+                 var rules : array<ReRule>) : Lexed {
+    var res <- lex_mode(mode, text, typedefs, rules)
+    resolve_text(res)
+    return <- res
+}
+
 //! `text` lexed by `mode` twice and filtered: the first pass learns
 //! the typedef names the second needs (the C grammar's lexer hack), so
 //! every mode sees the same table; `typedefs` gains the first pass's
-//! names
+//! names. `--mode pp` is lexed once with no filter: the preprocessing
+//! tokens as the lexer gives them
 def lex_filtered(mode : string; text : string; var typedefs : table<string; int>;
                  var rules : array<ReRule>) : Filtered {
-    var inscope first_raw <- lex_mode(mode, text, typedefs, rules)
-    resolve_text(first_raw)
+    var inscope first_raw <- lex_resolved(mode, text, typedefs, rules)
+    return <- Filtered(toks <- first_raw.toks, typedef_count = length(typedefs)) if (mode == "pp")
     var inscope first_toks <- filter_tokens(first_raw.toks, typedefs)
-    var inscope raw <- lex_mode(mode, text, typedefs, rules)
-    resolve_text(raw)
+    var inscope raw <- lex_resolved(mode, text, typedefs, rules)
     var inscope seed := typedefs
     var res = Filtered(toks <- filter_tokens(raw.toks, seed))
     res.typedef_count = length(seed)
     return <- res
 }
 
-//! `text` lexed by `mode` once with no filter, the identifier texts
-//! resolved: the preprocessing tokens of `--mode pp` as the lexer
-//! gives them
-def lex_unfiltered(mode : string; text : string; typedefs : table<string; int>;
-                   var rules : array<ReRule>) : Filtered {
-    var inscope raw <- lex_mode(mode, text, typedefs, rules)
-    resolve_text(raw)
-    return <- Filtered(toks <- raw.toks, typedef_count = length(typedefs))
+//! one `--dump` row: NAME, text and line, tab-separated, and in pp mode the `has_space` and
+//! `at_bol` columns
+def dump_line(t : Tok; pp : bool) : string {
+    let row = "{c_token_name(t.kind)}\t{t.text}\t{t.line}"
+    return pp ? "{row}\t{t.has_space ? "space" : "-"}\t{t.at_bol ? "bol" : "-"}" : row
 }
 
 //! a count-only scan of the default shape: the tokens and the
@@ -682,17 +687,10 @@ def main() : int {
         }
         var inscope typedefs : table<string; int>
         typedefs["__builtin_va_list"] = 1
-        let pp = args.mode == "pp"
-        var inscope filtered <- (pp ? lex_unfiltered(args.mode, text, typedefs, rules)
-            : lex_filtered(args.mode, text, typedefs, rules))
-        if (args.dump && pp) {
+        var inscope filtered <- lex_filtered(args.mode, text, typedefs, rules)
+        if (args.dump) {
             for (t in filtered.toks) {
-                print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\t{t.has_space ? "space" : "-"}"
-                    + "\t{t.at_bol ? "bol" : "-"}\n")
-            }
-        } elif (args.dump) {
-            for (t in filtered.toks) {
-                print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\n")
+                print("{dump_line(t, args.mode == "pp")}\n")
             }
         } else {
             print("{path}: {args.mode}: {length(filtered.toks)} tokens, {filtered.typedef_count} typedefs\n")
