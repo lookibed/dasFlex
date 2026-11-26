@@ -159,8 +159,8 @@ def class_bounds(t : FlexTables) : ClassBounds {
     return <- cb
 }
 
-//! Subset construction. The result's `err` and `err_rule` repeat the NFA's. A state's moves on
-//! every class come from one pass over its NFA edges, each edge feeding the classes it spans.
+//! Subset construction. The result's `err` and `err_rule` repeat the NFA's.
+[arch(at="../ARCHITECTURE.md#one-automaton")]
 def build_tables(n : Nfa) : FlexTables {
     var t = FlexTables(err = n.err, err_rule = n.err_rule)
     return <- t if (!empty(n.err))
@@ -356,9 +356,8 @@ def private split_touched(var p : Partition; var touched : array<int>) {
     touched |> clear()
 }
 
-//! Hopcroft's refinement: the block of every state, the dead state (`nstates`) included. A splitter's
-//! incoming moves are sorted by class in one pass over its states, so a class no move into it reads
-//! costs nothing.
+//! Hopcroft's refinement: the block of every state, the dead state (`nstates`) included
+[arch(at="../ARCHITECTURE.md#one-automaton")]
 def private refine(t : FlexTables) : array<int> {
     let n = t.nstates + 1
     let pre <- preimage(t)

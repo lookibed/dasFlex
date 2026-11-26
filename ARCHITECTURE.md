@@ -44,16 +44,27 @@ the NFA accepting states they hold, so when two rules match the same longest tex
 first wins - flex's rule. Running the rules one at a time would cost a pass per rule per token;
 the union automaton reads every byte once.
 
+Subset construction reads a DFA state's moves on every class in one pass over its NFA edges, each
+edge feeding the classes it spans. The NFA states one class moves to - the kernel - are interned by
+a hash of the sorted states, and a DFA state is the epsilon closure of a kernel, so a kernel met
+again maps to its DFA state without a second closure: the 16 286 moves of the C lexer before
+minimization meet 462 distinct kernels, so 462 closures run.
+
 After subset construction, Hopcroft's partition refinement merges every pair of DFA states that
 accept the same rule and move into equivalent states on every byte class, so the tables are the
 minimal automaton for the rule set; the start state of each condition keeps its identity, -1 remains
 the only dead state, and the byte classes are untouched. The refinement runs over the DFA plus one
 virtual dead state standing for -1, every move to itself, alone in its first block - the first
 partition groups the live states by the rule they accept - so its block never meets a live state;
-the blocks are renumbered in order of their lowest old state, and the start states follow. Minimization sits after subset construction,
-in `flex_tables`, because equivalence is a property of the deterministic automaton (subset
-construction turns distinct NFA paths into distinct state sets even when their futures coincide), and
-every front end and scanner shape then reads the smaller tables.
+the blocks are renumbered in order of their lowest old state, and the start states follow. Every
+block but the dead state's starts on the work list: splitting by all blocks but one splits by that
+one as well, since its preimage on a class is the complement of theirs, and the dead state's block
+has the largest preimage (most moves of a lexer go to -1). A splitter sorts the moves into its
+states by class in one pass over the preimage, which lists the moves into each state with their
+class, so it costs its incoming moves and only the classes among them split. Minimization sits
+after subset construction, in `flex_tables`, because equivalence is a property of the deterministic
+automaton (subset construction turns distinct NFA paths into distinct state sets even when their
+futures coincide), and every front end and scanner shape then reads the smaller tables.
 
 ## Bytes, not code points {#bytes}
 
@@ -65,7 +76,7 @@ parses; a set holding a code-point escape is a set of code points, spelled in by
 next state. Columns are byte equivalence classes - the finest partition of 0..255 every edge of the
 NFA is a union of, with byte 10 always alone in its class so a scanner counts lines by the class it
 reads - so the transition table is `nstates x nclasses` rather than `nstates x 256` (74 classes
-for the ASCII rules of the C lexer, 143 once its Annex D sets cut the lead and continuation bytes,
+for the ASCII rules of the C lexer, 142 once its Annex D sets cut the lead and continuation bytes,
 `#c-unicode`).
 
 ## Code points in a byte automaton {#code-points}
@@ -74,11 +85,14 @@ for the ASCII rules of the C lexer, 143 once its Annex D sets cut the lead and c
 `flex_codepoints` rewrites the escapes before it reads the text: one outside a set becomes the UTF-8
 bytes of its code point as one group, so a quantifier repeats the whole character; a set holding
 one is a set of code points - characters below 128, their escapes, code-point escapes, ranges, `^` -
-and becomes a byte set for its ASCII members plus, per UTF-8 shape, a sequence of byte ranges. A
+and becomes a byte set for its ASCII members plus the sequences of byte ranges of the rest. A
 range splits at the encoded-length boundaries and wherever the continuation bytes below the first
 differing byte do not span `0x80..0xBF`, the way RE2 compiles a class, so the sequences are exact:
 no overlong form, no surrogate, nothing past U+10FFFF - malformed input `.` would let through stays
-out. A set without an escape stays a set of bytes; in a code-point set a byte past 127 and every
+out. The sequences join a trie, so sequences sharing a prefix share its sets, and the kids of a node
+whose ways on read the same become one set before that tail, written once: the lead bytes of one
+shape lead into one path, which keeps the NFA and the DFA before minimization small (1 313 and 462
+states for the C lexer's rules, from 2 201 and 722 with one alternative per sequence). A set without an escape stays a set of bytes; in a code-point set a byte past 127 and every
 letter escape but `\n`, `\r`, `\t`, `\f`, `\v` - the classes `\w`, `\s`, `\d` and a byte escape such
 as `\x41` included - are refused with their offset, since none of them names a code point. `\u` and
 `\U` are code-point escapes everywhere in a rule, so `\u12` fails as naming no code point; a literal
@@ -230,7 +244,7 @@ the character. The decode runs in a rule body on those rare tokens, never in the
 and their escapes take `\u` and `\U`; a UCN's value is the literal's conversion, not the lexer's.
 `c_open` skips a byte order mark at offset 0, since a rule cannot see the offset and U+FEFF later
 in a file is an identifier character. The code-point sets give the example's tables 177 states and
-143 byte classes, from 115 and 74 for the ASCII rules. Annex D is spelled three times - the
+142 byte classes, from 115 and 74 for the ASCII rules. Annex D is spelled three times - the
 `C11_IDENT_RANGES` / `C11_NOT_INITIAL` tables `c_ident_cut` reads, the two sets of the identifier
 rule, and the `L` / `A` definitions of `c_lexer_reader.das` - and `tests/c_lexer_tests.das`
 derives both set texts from the tables and holds the other two spellings to them.
