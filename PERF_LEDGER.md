@@ -137,7 +137,7 @@ compile without a cache pays it once per `[flex]` scanner.
 ## Identifiers as symbols
 
 What finding identifiers by their bytes costs against the string per identifier: before = `main`
-(7f2285f), after = `intern` (d822d20). Before, the identifier rule built the word's string
+(7f2285f), after = `intern` (a804049). Before, the identifier rule built the word's string
 (`text()`) and looked it up in `KEYWORDS` and in the typedef table; after, it interns the span
 (`flex/flex_symbols.das`) and emits the symbol's kind - keywords and typedef names are kinds of
 symbols - and the token arrays of `--mode flex` and `--mode probe` keep an identifier as its symbol,
@@ -151,25 +151,26 @@ its tokens - a typedef table, hide sets: "main: token array + string interning (
 main)" is `--mode flex` of `main`'s `c_lex_compare.das` followed by a `table<string; int>` insert of
 every IDENTIFIER and TYPEDEF_NAME token's text on a miss and a lookup on a hit, timed together, a
 mode added to a scratch copy of `main` and committed nowhere. One run, alone on a quiet machine (cpu
-busy 3%), daslang 0.6.6; each cell is the median of 3 rounds, the two trees in alternating order,
+busy 2%), daslang 0.6.6; each cell is the median of 3 rounds, the two trees in alternating order,
 every round one process per tree, tier, driver and file, each process the median of 9 passes; JIT
-is `-jit -jit-no-cache`. Ms; the round range stays within 5% of the cell except two JIT cells: main
-count only doom_p_mobj (8%) and intern token array doom_am_map (6%).
+is `-jit -jit-no-cache`. Ms; the round range stays within 5% of the cell except three JIT cells:
+intern probe wasm3_m3_parse (8%), intern token array wasm3_m3_parse (5.4%) and main token array
+doom_p_mobj (5.2%).
 
 | measure | interp doom_am_map.i | interp doom_p_mobj.i | interp wasm3_m3_parse.i | jit doom_am_map.i | jit doom_p_mobj.i | jit wasm3_m3_parse.i |
 |---|---|---|---|---|---|---|
-| main: count only | 10.212 | 8.676 | 10.385 | 0.692 | 0.615 | 0.707 |
-| main: token array | 11.676 | 9.719 | 12.073 | 0.947 | 0.785 | 0.949 |
-| main: token array + string interning (scratch driver on main) | 12.147 | 10.189 | 12.022 | 1.144 | 0.961 | 1.088 |
-| intern: count only | 10.836 (+6%) | 9.543 (+10%) | 10.655 (+3%) | 0.541 (-22%) | 0.477 (-22%) | 0.501 (-29%) |
-| intern: token array | 13.376 (+10%) | 10.940 (+7%) | 12.863 (+7%) | 0.774 (-32%) | 0.640 (-33%) | 0.715 (-34%) |
-| intern: probe (hand-written) | 9.658 | 8.168 | 9.059 | 1.095 | 0.854 | 1.021 |
+| main: count only | 10.050 | 8.693 | 10.653 | 0.696 | 0.603 | 0.702 |
+| main: token array | 11.377 | 9.719 | 11.682 | 0.923 | 0.769 | 0.921 |
+| main: token array + string interning (scratch driver on main) | 11.922 | 10.235 | 11.966 | 1.111 | 0.968 | 1.077 |
+| intern: count only | 10.586 (+5%) | 9.126 (+5%) | 10.520 (-1%) | 0.523 (-25%) | 0.466 (-23%) | 0.498 (-29%) |
+| intern: token array | 12.407 (+4%) | 10.755 (+5%) | 12.290 (+3%) | 0.755 (-32%) | 0.633 (-35%) | 0.728 (-32%) |
+| intern: probe (hand-written) | 9.760 | 8.102 | 9.353 | 1.094 | 0.856 | 1.028 |
 
 The count-only change is against `main`'s count only, the token-array change against the fair
-baseline. The string interning adds 0.47 ms to `main`'s token array in the interpreter on
-doom_am_map.i and doom_p_mobj.i, and stays inside the round range on wasm3_m3_parse.i; under the
-JIT it adds 0.14-0.20 ms. Against that baseline `intern`'s token array takes 7-10% longer in the
-interpreter and 32-34% less time under the JIT.
+baseline. The string interning adds 0.52-0.55 ms to `main`'s token array in the interpreter on
+doom_am_map.i and doom_p_mobj.i and 0.28 ms on wasm3_m3_parse.i; under the JIT it adds 0.16-0.20
+ms. Against that baseline `intern`'s token array takes 3-5% longer in the interpreter and 32-35%
+less time under the JIT.
 
 Heap probe, one count-only scan (`--count` prints it as `HEAP`): before, 7 009 / 6 478 / 7 498
 string-heap allocations per pass on the three files - one per identifier; after, none in either
@@ -178,16 +179,38 @@ growing to 2 669 / 2 734 / 1 273 distinct names, since every pass opens a fresh 
 under the JIT. `tests/c_lexer_tests.das` holds the property: twenty copies of a source allocate what
 one does, and no string.
 
-The JIT gains 22-29% on the count-only scan. About 40% of the identifiers of a preprocessed file are
+The JIT gains 23-29% on the count-only scan. About 40% of the identifiers of a preprocessed file are
 first occurrences (2 669 distinct names in 7 009 on doom_am_map.i), so the table holds every name
 rather than a few hundred keywords and typedef names, and each first occurrence adds an entry.
 
-The interpreter stays 3-10% slower than `main` on the count-only scan, from 13-25% with the probing
-table in both tiers (the run of f48271a). A native hit costs about what the string and the two table
-lookups of `main` cost; the rest is the first occurrences, which `main` never stored: each copies the
-name into the arena, appends an entry and inserts it, about 170 ns over a hit (indicative, a loop
-over the identifiers of one file). The hand-written probe interns through the raw `intern`, which in
-the native shape copies the span into a scratch buffer first.
+The interpreter stays up to 5% slower than `main` on the count-only scan, from 13-25% with the
+probing table in both tiers (the run of f48271a). Measured per identifier through `c_word_kind` over
+the identifiers of one file (indicative, a normal job): a native hit takes 96-105 ns, against
+103-115 ns for `main`'s string and two lookups plus the baseline's lookup; a first occurrence takes
+about 280 ns more than a hit, against about 150 ns for the baseline's (a failed lookup, then an
+insert). Of the first occurrence, timed step by step over the distinct names: the arena copy and its
+zero 20 ns, the zero-byte check (`strlen` of the copy) 23 ns, the insert 56-71 ns - what the
+baseline's insert costs - and the entry push 40-62 ns at 48 bytes, 55 ns at 40.
+
+The run before this one (d822d20: 13.376 / 10.940 / 12.863 ms, 7-10% over the baseline) took the
+first occurrence through `intern_unsettled`, the walk over a zero-byte prefix's names with a branch
+on its result, and pushed a 48-byte entry; `c_word_kind` was a call from `c_next`. a804049 removes
+what the contract does not need: a miss on the prefix goes to `intern_new` - copy, zero-byte
+check, entry, insert - with no walk, the entry drops its `built` flag (a native entry's unused
+`start` marks the built text) and shrinks to 40 bytes, `c_word_kind` is inline, so the identifier
+rule runs inside `c_next` with no call, and the token-array driver reads `tok.sym` with no local.
+Per identifier in the interpreter (`options log_nodes`) the hit is 16 statements inside `c_next`,
+the store of the kind included - before, a call to `c_word_kind` holding 15 and the store; a miss adds
+`intern_new`'s 10 statements and the entry's 7 stores - before, `intern_unsettled`'s 14 (the walk's
+test, two locals and a branch on the walk's result more) and the same 7 stores. What remains is the contract: the shape test, the byte saved, zeroed and
+restored around the native lookup, the zero-byte check on the hit (`plain_len`) and on the miss
+(`strlen`), `tok.sym`, the entry each symbol owns, the arena copy that outlives the source, and the
+second hash of a miss, which the baseline pays as well. A single insert-or-get would save that
+hash only with the name already in the arena: copying every token there before the lookup (tried)
+makes each hit 8-10 ns slower, which the 40% of first occurrences do not repay.
+
+The hand-written probe interns through the raw `intern`, which in the native shape copies the span
+into a scratch buffer first.
 
 Variants tried against this one, count-only scan, three files, 3 rounds in alternating order, each a
 normal job beside other work (indicative; ms on doom_am_map.i, then the change against `main` on the
