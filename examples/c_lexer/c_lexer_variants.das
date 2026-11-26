@@ -10,6 +10,8 @@ module c_lexer_variants shared public
 
 require flex/flex_macro public
 require c_lexer
+require c_lexer_goto
+require c_lexer_reader
 
 [flex(dispatch = "goto", matcher = "call")]
 def c_next_dgoto(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list is one function by construction
@@ -664,4 +666,19 @@ def c_next_table(var lx : FlexLexer) : bool {  // nolint:STYLE038 - a rule list 
         rule("\\*") {
         }
     }
+}
+
+//! the `--mode` name in `c_lex_compare.das` of every scanner shape of the C rules
+let C_SHAPES = fixed_array("flex", "reader", "goto", "flex-dgoto", "flex-dtree", "goto-dgoto", "flex-call", "table")
+
+//! the scanner of the shape `C_SHAPES` names `shape`; `c_next` for any other name
+def c_scanner(shape : string) : function<(var lx : FlexLexer) : bool> {
+    return @@c_next_reader if (shape == "reader")
+    return @@c_next_goto if (shape == "goto")
+    return @@c_next_dgoto if (shape == "flex-dgoto")
+    return @@c_next_dtree if (shape == "flex-dtree")
+    return @@c_next_goto_dgoto if (shape == "goto-dgoto")
+    return @@c_next_call if (shape == "flex-call")
+    return @@c_next_table if (shape == "table")
+    return @@c_next
 }

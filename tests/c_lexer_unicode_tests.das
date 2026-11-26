@@ -9,8 +9,6 @@ require strings
 require math
 require _flex_test_helpers
 require ../examples/c_lexer/c_lexer.das
-require ../examples/c_lexer/c_lexer_goto.das
-require ../examples/c_lexer/c_lexer_reader.das
 require ../examples/c_lexer/c_lexer_variants.das
 
 // The C lexer example against the Unicode case table in examples/c_lexer/unicode_cases/cases.txt:
@@ -98,33 +96,13 @@ def expected_stream(c : UnicodeCase) : array<string> {
     return <- out
 }
 
-let SHAPES = fixed_array("flex", "goto", "reader", "dgoto", "dtree", "goto-dgoto", "call", "table")
-
-def private scan(shape : string; var lx : FlexLexer) : bool {
-    if (shape == "goto") {
-        return c_next_goto(lx)
-    } elif (shape == "reader") {
-        return c_next_reader(lx)
-    } elif (shape == "dgoto") {
-        return c_next_dgoto(lx)
-    } elif (shape == "dtree") {
-        return c_next_dtree(lx)
-    } elif (shape == "goto-dgoto") {
-        return c_next_goto_dgoto(lx)
-    } elif (shape == "call") {
-        return c_next_call(lx)
-    } elif (shape == "table") {
-        return c_next_table(lx)
-    }
-    return c_next(lx)
-}
-
 //! the lexer's stream over `src` in `shape`, in the form of `expected_stream`
 def lexed_stream(src, shape : string) : array<string> {
     var lx : FlexLexer
     c_open(lx, src)
     var out : array<string>
-    while (scan(shape, lx)) {
+    let scan = c_scanner(shape)
+    while (invoke(scan, lx)) {
         let spelling = text(lx)
         out |> push("{clang_kind(lx.tok.kind, spelling)} {lx.tok.start} {lx.tok.len}")
     }
@@ -144,7 +122,7 @@ def test_unicode_case_table(t : T?) {
         checked++
         let src = fread(path_join(cases_dir(), "{c.name}.c"))
         var inscope want <- expected_stream(c)
-        for (shape in SHAPES) {
+        for (shape in C_SHAPES) {
             t |> equal(lexed_stream(src, shape), want, "{c.name} ({shape})")
         }
     }

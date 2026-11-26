@@ -11,14 +11,13 @@ options indenting = 4
 //
 // `flex` (also `flex-inline`) is the default shape, the inline matcher with goto dispatch; the
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
-// `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`).
+// `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`). Every mode but `flex`
+// reaches its scanner through the function `c_scanner` returns, one indirect call per token more.
 //
 //   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N [--count]) files...
 //   (`-- --help` lists the flags)
 
 require c_lexer
-require c_lexer_goto
-require c_lexer_reader
 require c_lexer_variants
 require daslib/regex
 require daslib/fio
@@ -266,22 +265,11 @@ def lex_flex(text : string; typedefs : table<string; int>; shape : string) : arr
     lx.symbols := typedefs
     c_open(lx, text)
     var out : array<Tok>
-    if (shape == "goto") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_goto(l)
-    } elif (shape == "flex-dgoto") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_dgoto(l)
-    } elif (shape == "flex-dtree") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_dtree(l)
-    } elif (shape == "flex-call") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_call(l)
-    } elif (shape == "table") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_table(l)
-    } elif (shape == "reader") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_reader(l)
-    } elif (shape == "goto-dgoto") {
-        out <- flex_tokens(lx) $(var l : FlexLexer) => c_next_goto_dgoto(l)
-    } else {
+    if (shape == "flex" || shape == "flex-inline") {
         out <- flex_tokens(lx) $(var l : FlexLexer) => c_next(l)
+    } else {
+        let scan = c_scanner(shape)
+        out <- flex_tokens(lx) $(var l : FlexLexer) => invoke(scan, l)
     }
     if (lx.failed) {
         print("{lx.err}\n")
