@@ -470,9 +470,14 @@ def test_filtered_learns_typedefs(t : T?) {
     t |> success(typedefs |> key_exists("T"))
 }
 
-[test(description = "the Lexed of a dasFlex mode owns the bytes its symbols' spans point into")]
+[test(description = "the Lexed of a dasFlex mode owns the bytes its symbols' spans point into when they are spans (probing, the JIT's shape); a native interner (the interpreter's) holds copies and no span")]
 def test_lexed_owns_span_bytes(t : T?) {
     var inscope typedefs : table<string; int>
     var inscope lexed <- lex_flex("int x;", typedefs, "flex")
-    t |> success(!empty(lexed.src) && lexed.syms.src == unsafe(addr<uint8 const?>(lexed.src[0])))
+    if (symbols_native(lexed.syms)) {
+        t |> equal(lexed.syms.src, null)
+        t |> equal(symbol_text(lexed.syms, lexed.toks[1].sym), "x")
+    } else {
+        t |> success(!empty(lexed.src) && lexed.syms.src == unsafe(addr<uint8 const?>(lexed.src[0])))
+    }
 }

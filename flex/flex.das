@@ -7,6 +7,7 @@ module flex shared public
 require daslib/strings_boost
 require daslib/regex
 require flex/flex_symbols public
+require flex/flex_tier
 
 // The scanner the generated code drives: input as raw bytes, a cursor, the token the last rule
 // emitted, and line/column kept by counting newlines in each consumed span. Matching and taking a
@@ -27,7 +28,7 @@ struct FlexToken {
 //! The scanner state.
 struct FlexLexer {
     bytes : array<uint8>        //!< the input, one copy made at `flex_open`
-    data : uint8 const?         //!< `bytes` as a raw pointer for the inner loop
+    data : uint8?               //!< `bytes` as a raw pointer for the inner loop; a zero past the input
     len : int
     pos : int
     line : int
@@ -50,7 +51,8 @@ def flex_open(var lx : FlexLexer; src : string; file : string = "") {
     lx.tok.sym = -1
     lx.bytes <- to_bytes(src)
     lx.len = length(lx.bytes)
-    lx.data = lx.len > 0 ? unsafe(addr(lx.bytes[0])) : null
+    lx.bytes |> push(0u8)
+    lx.data = unsafe(addr(lx.bytes[0]))
     lx.pos = 0
     lx.line = 1
     lx.col = 1
@@ -129,12 +131,34 @@ def flex_group_span(var lx : FlexLexer; var re : Regex; index : int) : range {
 }
 
 //! The symbol of the matched text, by its bytes and without a string;
-//! also kept as `tok.sym`.
-[inline]
+//! also kept as `tok.sym`. A native interner reads the text in place:
+//! the byte after the token is a zero while the table looks it up.
+[arch(at="../ARCHITECTURE.md#symbols"), inline]
 def intern(var lx : FlexLexer) : int {
-    let id = intern(lx.syms, lx.data, lx.tok.start, lx.tok.len)
-    lx.tok.sym = id
-    return id
+    static_if (flex_jit_tier()) {
+        if (lx.syms.shape != FlexSymbolsShape.native) {
+            lx.tok.sym = intern(lx.syms, lx.data, lx.tok.start, lx.tok.len)
+            return lx.tok.sym
+        }
+    } else {
+        if (lx.syms.shape == FlexSymbolsShape.probing) {
+            lx.tok.sym = intern(lx.syms, lx.data, lx.tok.start, lx.tok.len)
+            return lx.tok.sym
+        }
+    }
+    unsafe {
+        let p = lx.data + lx.tok.start
+        var after = lx.data + lx.tok.start + lx.tok.len
+        let saved = *after
+        *after = 0u8
+        var id = lx.syms.ids?[reinterpret<string>(p)] ?? -1
+        if (id < 0 || lx.syms.entries[id].plain_len != lx.tok.len) {
+            id = intern_unsettled(lx.syms, p, lx.tok.len, id)
+        }
+        *after = saved
+        lx.tok.sym = id
+        return id
+    }
 }
 
 //! A length-bounded comparison of the matched text with `s`, no allocation.
