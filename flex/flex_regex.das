@@ -254,12 +254,23 @@ def private trie_insert(var trie : ByteTrie; seq : array<int2>) {
     }
 }
 
-//! the bytes of node `k` and every way on from it, as `daslib/regex` text
-def private trie_branch(trie : ByteTrie; k : int) : string {
-    let r = trie.bytes[k]
-    var inscope tail <- [for (c in trie.kids[k]); trie_branch(trie, c)]
-    let rest = length(tail) == 1 ? tail[0] : empty(tail) ? "" : "(?:{join(tail, "|")})"
-    return "[{byte_items(r.x, r.y)}]{rest}"
+//! the ways on from `node` as `daslib/regex` alternatives: kids whose own ways on read the same
+//! share one byte set, so equal tails are written - and built - once
+def private trie_alternatives(trie : ByteTrie; node : int) : array<string> {
+    var tails, items : array<string>
+    for (k in trie.kids[node]) {
+        var inscope after <- trie_alternatives(trie, k)
+        let tail = length(after) == 1 ? after[0] : empty(after) ? "" : "(?:{join(after, "|")})"
+        let r = trie.bytes[k]
+        let at = find_index(tails, tail)
+        if (at < 0) {
+            tails |> push(tail)
+            items |> push(byte_items(r.x, r.y))
+        } else {
+            items[at] = "{items[at]}{byte_items(r.x, r.y)}"
+        }
+    }
+    return <- [for (tail, it in tails, items); "[{it}]{tail}"]
 }
 
 //! the byte-range sequences matching exactly the UTF-8 encodings of `lo..hi`, a range of one encoded
@@ -349,7 +360,7 @@ def private codepoint_set_text(ranges : array<int2>) : string {
         utf8_sequences(max(r.x, int(0x80)), r.y, trie) if (r.y >= 0x80)
     }
     if (!empty(trie.kids)) {
-        alts |> push_from([for (k in trie.kids[0]); trie_branch(trie, k)])
+        alts |> push_from(trie_alternatives(trie, 0))
     }
     return empty(alts) ? "(?:[^\\x00-\\xFF])" : "(?:{join(alts, "|")})"
 }
