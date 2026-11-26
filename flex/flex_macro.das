@@ -637,6 +637,7 @@ def private make_take(lx, mode, matcher : string) : array<ExpressionPtr> {
 
 //! the generated function body: match, take the token, dispatch on the rule; the loop and its guards
 //! are generated, the user's rule bodies inside the arms are not
+[arch(at="../ARCHITECTURE_TOKENS.md#pp-flags")]
 def private make_scanner_body(spec : FlexSpec; g : TableGlobals; t : FlexTables;
                               lx, mode, dispatch, matcher : string; at : LineInfo) : ExpressionPtr {
     let base = mode == "goto" ? t.nstates + 1 : 0

@@ -50,6 +50,7 @@ struct FlexLexer {
 }
 
 //! Open `src` for scanning: the bytes are copied once, the string may go.
+[arch(at="../ARCHITECTURE_TOKENS.md#pp-flags")]
 def flex_open(var lx : FlexLexer; src : string; file : string = "") {
     flex_symbols_detach(lx.syms)
     lx.tok.sym = -1

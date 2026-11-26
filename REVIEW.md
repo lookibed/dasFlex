@@ -26,7 +26,7 @@ shape into the automaton at build time instead (`ARCHITECTURE.md#bytes`).
 tables are module globals the annotation fills at compile time (`ARCHITECTURE.md#compile-time`).
 
 **A diff that makes two shapes - any `mode`, `matcher` or `dispatch` - produce different tokens,
-lines or columns for the same rules and input is a defect** - `tests/flex_tests.das` holds the
+token flags (`has_space`, `at_bol`), lines or columns for the same rules and input is a defect** - `tests/flex_tests.das` holds the
 equivalence check; weakening it is a defect too.
 
 **A diff that lets `flex_tables` return tables with an empty `err` for a rule whose regex did not
@@ -39,6 +39,10 @@ where a whole UTF-8 character is available, is a defect.**
 **A diff that makes the inline matcher or goto mode read a token's bytes a second time after the
 match - a pass for line and column - is a defect** - they count newlines on the way
 (`ARCHITECTURE.md#two-shapes`).
+
+**A diff that makes the token flags cost work per byte - a pass over the token or the skipped text
+to find a newline or a space - is a defect** - the line and column the take wrote already answer
+(`ARCHITECTURE_TOKENS.md#pp-flags`).
 
 **A diff that allocates a string in the generated scanner loop before a rule body asks for one
 (`text`) is a defect** - the match is a span; the string is on request.
@@ -60,10 +64,11 @@ in both shapes.
 file differs from the hand-written lexer in `c_lex_compare.das` (`--mode probe`) is a defect** - run
 both with `--dump` and diff.
 
-**A diff that edits `examples/c_lexer/c_lexer_goto.das` or `examples/c_lexer/c_lexer_variants.das`
-by hand, or changes the rules of `c_next` in `c_lexer.das` without running
-`examples/c_lexer/gen_variants.das`, is a defect** - the two files are the generator's output, one
-copy of the rules per scanner shape.
+**A diff that edits `examples/c_lexer/c_lexer_goto.das`, `examples/c_lexer/c_lexer_variants.das` or
+`examples/c_lexer/c_lexer_pp.das` by hand, or changes the rules of `c_next` in `c_lexer.das` without
+running `examples/c_lexer/gen_variants.das`, is a defect** - the three files are the generator's
+output, one copy of the rules per scanner shape and one as preprocessing tokens;
+`tests/c_lexer_tests.das` compares them with it, and weakening that check is a defect too.
 
 **A diff that gives a front end - the `%flex~` reader or a new one - its own table builder, its own
 scanner emission, or a path to the tables that does not pass a `FlexSpec` to `flex_generate`, is a

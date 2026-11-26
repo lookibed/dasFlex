@@ -50,6 +50,12 @@ def main() {
 - `lx |> group(n)` in a rule body is the text of capture group `n` of the token, `lx |> group_span(n)`
   its byte range in the input; the rule's regex runs once over the token on the first call, and only
   rules that call them pay for it (`ARCHITECTURE.md#groups`).
+- Every token carries the two flags a C preprocessor reads: `lx.tok.has_space`, set when skipped
+  text - whitespace, a comment, any rule that did not emit - came before it, and `lx.tok.at_bol`,
+  set for the first token of the input and of each line. They are set before the rule body runs, so
+  a body may read them, and cost no work per byte. Unlike chibicc, a newline inside a block comment
+  sets `at_bol` here. `examples/c_lexer/c_lexer_pp.das` is the C11 lexer as preprocessing tokens:
+  one pp-number rule and `#`/`##` punctuators (`ARCHITECTURE_TOKENS.md#pp-flags`).
 
 The same lexer in flex-like text, at module level - it declares `def my_lexer(var lx : FlexLexer) :
 bool` through the same generator:
@@ -103,8 +109,9 @@ chibicc's `tokenize()` does work the dasFlex rows do not: it allocates a token p
 `calloc`'d array type, and numbers lines in a second pass over the token list; it does not tell keywords from identifiers and has no typedef
 lookup. Against `fast` the count-only JIT row takes 2.49-2.74x less time, the token-array JIT row
 1.71-1.80x less. The table was taken with the C lexer's ASCII rules; what its Unicode rules cost
-is the ledger's "Unicode in the C lexer". The C lexer in `examples/c_lexer` does not carry `#` and
-`##` tokens, or chibicc's `has_space` / `at_bol` flags. Method and the step-by-step history:
+is the ledger's "Unicode in the C lexer". The timed C lexer (`c_next`) skips a `#` line, where chibicc
+makes `#` and `##` tokens (`c_lexer_pp.das` makes them too), and the table predates the
+`has_space` / `at_bol` flags every token now carries. Method and the step-by-step history:
 `PERF_LEDGER.md`.
 
 The table predates identifiers as symbols: the identifier rule now interns the token's bytes and
