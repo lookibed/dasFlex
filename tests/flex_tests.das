@@ -939,10 +939,21 @@ def test_token_flags(t : T?) {
     }
 }
 
-[test(description = "flex_open starts a lexer reused on a second input with its first token at_bol and no has_space")]
+[test(description = "at_bol survives a later skip on the same line: a skipped newline then a comment, a token that ended its line then a space")]
+def test_bol_kept_over_same_line_skip(t : T?) {
+    var shapes := EXPLICIT_SHAPES
+    shapes |> push("")
+    let res <- shape_streams("flags_keep.das", FLAG_RULES, shapes, "a\n/*c*/ b !\n x", tier_is_jit())
+    t |> equal(res.issues, "")
+    for (stream in res.streams) {
+        t |> equal(stream, ["1@1:1/b:a", "1@2:7/sb:b", "4@2:9/s:!\n", "1@3:2/sb:x", ""])
+    }
+}
+
+[test(description = "flex_open starts a lexer reused on a second input with its first token at_bol and no has_space, though the first input ended in skipped text")]
 def test_token_flags_reopen(t : T?) {
     var lx : FlexLexer
-    let first <- lex_tokens(lx, "a b", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
+    let first <- lex_tokens(lx, "a b ", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
     t |> equal(first, ["b", "s"])
     let second <- lex_tokens(lx, "c ", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
     t |> equal(second, ["b"])
