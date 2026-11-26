@@ -1,7 +1,7 @@
 # The Unicode case table of the C lexer example: each case is an input file of this folder and the
 # token stream clang 18 lexes from it (clang -fsyntax-only -Xclang -dump-tokens, the default gnu17),
 # with the verdicts of clang -fsyntax-only and gcc 11 -fsyntax-only (accept or reject, then the first
-# error, or the first warning of an accepted file, as line:col). tests/c_lexer_unicode_tests.das
+# error, or the first warning of an accepted file, as line:col). tests/c_lexer_tests.das
 # lexes every input and compares; no compiler runs at test time.
 #
 #   case    the input is <name>.c

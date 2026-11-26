@@ -232,7 +232,7 @@ and their escapes take `\u` and `\U`; a UCN's value is the literal's conversion,
 in a file is an identifier character. The code-point sets give the example's tables 177 states and
 143 byte classes, from 115 and 74 for the ASCII rules. Annex D is spelled three times - the
 `C11_IDENT_RANGES` / `C11_NOT_INITIAL` tables `c_ident_cut` reads, the two sets of the identifier
-rule, and the `L` / `A` definitions of `c_lexer_reader.das` - and `tests/c_lexer_unicode_tests.das`
+rule, and the `L` / `A` definitions of `c_lexer_reader.das` - and `tests/c_lexer_tests.das`
 derives both set texts from the tables and holds the other two spellings to them.
 
 ## Not carried by this version {#not-carried}
