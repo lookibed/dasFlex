@@ -181,3 +181,25 @@ def test_annex_d_boundaries(t : T?) {
         t |> equal(one_identifier("a{ucn}"), c11_ident_char(cp, false), "a {ucn}")
     }
 }
+
+//! the default shape's tokens over `src` as `text` each, then `error N` when the lexer fails at byte N
+def private default_stream(src : string) : array<string> {
+    var lx : FlexLexer
+    c_open(lx, src)
+    var out : array<string>
+    while (c_next(lx)) {
+        out |> push(text(lx))
+    }
+    if (lx.failed) {
+        out |> push("error {lx.pos}")
+    }
+    return <- out
+}
+
+[test(description = "a UCN whose value is past U+10FFFF, eight hex digits F included, ends the identifier before it, and stops the lexer when it opens one")]
+def test_ucn_past_unicode(t : T?) {
+    t |> equal(default_stream("a\\UFFFFFFFF"), ["a", "error 1"])
+    t |> equal(default_stream("a\\U00110000 b"), ["a", "error 1"])
+    t |> equal(default_stream("\\UFFFFFFFF"), ["error 0"])
+    t |> equal(default_stream("a\\U000EFFFD"), ["a\\U000EFFFD"])
+}

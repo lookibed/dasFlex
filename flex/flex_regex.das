@@ -309,7 +309,7 @@ def private codepoint_set_text(ranges : array<int2>) : string {
 
 //! the code point of the escape `\uHHHH` or `\UHHHHHHHH` at `at`, -1 when its digits are not all hex
 //! or it names a surrogate or a value past `10FFFF`
-def private escape_codepoint(d : array<uint8>#; at : int) : int {
+def escape_codepoint(d : array<uint8> | #; at : int) : int {
     let digits = int(d[at + 1]) == 'u' ? 4 : 8
     return -1 if (at + 2 + digits > length(d))
     var cp = 0

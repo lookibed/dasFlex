@@ -9,6 +9,7 @@ module c_lexer shared public
 // `lx.symbols` is the typedef table the caller maintains: a name in it lexes as TYPEDEF_NAME.
 
 require flex/flex_macro public
+require flex/flex_regex
 require strings
 require daslib/enum_trait
 require daslib/utf8_utils
@@ -175,26 +176,18 @@ let C11_IDENT_RANGES = fixed_array(uint2(0xA8, 0xA8), uint2(0xAA, 0xAA), uint2(0
 //! C11 Annex D.2: the code points of D.1 an identifier may not start with
 let C11_NOT_INITIAL = fixed_array(uint2(0x300, 0x36F), uint2(0x1DC0, 0x1DFF), uint2(0x20D0, 0x20FF), uint2(0xFE20, 0xFE2F))
 
-def private in_ranges(ranges : auto; u : uint) : bool {
-    for (r in ranges) {
-        return true if (u >= r.x && u <= r.y)
-    }
-    return false
+//! whether code point `cp` past ASCII may stand in an identifier, at its start when `initial`
+def c11_ident_char(cp : int; initial : bool) : bool {
+    let u = uint(cp)
+    return ((find_index_if(C11_IDENT_RANGES) $(r) => u >= r.x && u <= r.y) >= 0
+        && !(initial && (find_index_if(C11_NOT_INITIAL) $(r) => u >= r.x && u <= r.y) >= 0))
 }
 
-//! whether code point `cp` past ASCII may stand in an identifier, at its start when `initial`
-def c11_ident_char(cp : int; initial : bool) : bool =>
-    in_ranges(C11_IDENT_RANGES, uint(cp)) && !(initial && in_ranges(C11_NOT_INITIAL, uint(cp)))
-
-//! the code point of the UCN at `at` (`\uHHHH` or `\UHHHHHHHH`, the digits all hex) and its length
-def private ucn_at(bytes : auto; at : int) : int2 {
+//! the code point of the UCN at `at` (`\uHHHH` or `\UHHHHHHHH`, the digits all hex) and its length;
+//! -1 for a surrogate or a value past U+10FFFF
+def private ucn_at(bytes : array<uint8> | #; at : int) : int2 {
     let digits = int(bytes[at + 1]) == 'u' ? 4 : 8
-    var cp = 0
-    for (k in range(digits)) {
-        let h = int(bytes[at + 2 + k])
-        cp = cp * 16 + (is_number(h) ? h - '0' : (h | 0x20) - 'a' + 10)
-    }
-    return int2(cp, digits + 2)
+    return int2(escape_codepoint(bytes, at), digits + 2)
 }
 
 //! the code point of the well-formed UTF-8 character at `at` and its length
