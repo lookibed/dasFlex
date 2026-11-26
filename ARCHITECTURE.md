@@ -61,10 +61,14 @@ block but the dead state's starts on the work list: splitting by all blocks but 
 one as well, since its preimage on a class is the complement of theirs, and the dead state's block
 has the largest preimage (most moves of a lexer go to -1). A splitter sorts the moves into its
 states by class in one pass over the preimage, which lists the moves into each state with their
-class, so it costs its incoming moves and only the classes among them split. Minimization sits
-after subset construction, in `flex_tables`, because equivalence is a property of the deterministic
-automaton (subset construction turns distinct NFA paths into distinct state sets even when their
-futures coincide), and every front end and scanner shape then reads the smaller tables.
+class, so it costs its incoming moves and only the classes among them split. Three of these choices
+change the build's cost and never its tables - a kernel met again skipping its closure, the dead
+state's block left off the work list, and a splitter splitting only on the classes among its
+incoming moves - so no test tells them apart, and the table-build section of `PERF_LEDGER.md`
+measures their effect. Minimization sits after subset construction, in `flex_tables`, because
+equivalence is a property of the deterministic automaton (subset construction turns distinct NFA
+paths into distinct state sets even when their futures coincide), and every front end and scanner
+shape then reads the smaller tables.
 
 ## Bytes, not code points {#bytes}
 
