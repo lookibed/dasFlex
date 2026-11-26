@@ -34,7 +34,7 @@ WS      [ \t\v\f\r\n]
 {WS}+
 #[^\n]*
 "//"[^\n]*
-"/*"                            { begin(COMMENT) }
+"/*"                            { lx.bol_saved = lx.bol_pending; begin(COMMENT) }
 {L}{A}*                         { emit(c_word_kind(lx)) }
 ({XL}|{UCN})({XA}|{UCN})*       { return false if (!c_ident_cut(lx)); emit(c_word_kind(lx)) }
 {HP}{H}+{IS}?                   { emit(I_CONSTANT) }
@@ -71,7 +71,7 @@ WS      [ \t\v\f\r\n]
 "=="                            { emit(EQ_OP) }
 "!="                            { emit(NE_OP) }
 [;{},:=()\[\].&!~\-+*/%<>^|?]   { emit(c_byte_kind(lx)) }
-<COMMENT>"*/"                   { begin(INITIAL) }
+<COMMENT>"*/"                   { lx.bol_pending = lx.bol_saved; begin(INITIAL) }
 <COMMENT>[^*]+
 <COMMENT>\*
 %%

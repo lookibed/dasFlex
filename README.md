@@ -52,9 +52,13 @@ def main() {
   rules that call them pay for it (`ARCHITECTURE.md#groups`).
 - Every token carries the two flags a C preprocessor reads: `lx.tok.has_space`, set when skipped
   text - whitespace, a comment, any rule that did not emit - came before it, and `lx.tok.at_bol`,
-  set for the first token of the input and of each line. They are set before the rule body runs, so
-  a body may read them, and cost no work per byte. Unlike chibicc, a newline inside a block comment
-  sets `at_bol` here. `examples/c_lexer/c_lexer_pp.das` is the C11 lexer as preprocessing tokens
+  set for the first token of the input and for a token a newline separates from the previous one -
+  in skipped text, or ending that token; the token right after a multi-line token, such as a string
+  of a language that allows one, shares its last line and is not `at_bol`. They are set before the
+  rule body runs, so a body may read them, and cost no work per byte. The C example keeps a block
+  comment one space, as C11 phase 3 has it: a newline inside the comment does not set `at_bol`.
+  Unlike chibicc, `has_space` stays set across a newline, as gcc and clang keep it.
+  `examples/c_lexer/c_lexer_pp.das` is the C11 lexer as preprocessing tokens
   (`ARCHITECTURE_TOKENS.md#pp-tokens`): one pp-number rule, `#`/`##` punctuators, every identifier
   an IDENTIFIER, and any other character a PP_OTHER token. Its input has had its backslash-newline
   line splices removed (translation phase 2); neither C lexer takes digraphs.

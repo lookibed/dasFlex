@@ -559,6 +559,24 @@ def test_pp_hash(t : T?) {
                 "IDENTIFIER:a/s", "#:#/", "IDENTIFIER:b/"])
 }
 
+[test(description = "every scanner of C_SHAPES, the %flex~ reader among them, gives each token the flags of c_next, and a newline inside a block comment does not put the next token at the start of a line (C11 phase 3: the comment is one space)")]
+def test_flags_every_c_shape(t : T?) {
+    let src = "int a;\n  b /* c\n */ c\nd /*\n*/\n/* e\n*/ f"
+    for (shape in C_SHAPES) {
+        var lx : FlexLexer
+        let scan = c_scanner(shape)
+        var inscope out <- lex_tokens(lx, src, $(var l : FlexLexer) => invoke(scan, l),
+                                      $(var l : FlexLexer) => "{text(l)}/{flags_of(l)}")
+        t |> equal(out, ["int/b", "a/s", ";/", "b/sb", "c/s", "d/sb", "f/sb"], shape)
+    }
+}
+
+[test(description = "the C pp lexer puts no # after a block comment that spans lines at the start of a line, unless the comment itself starts one")]
+def test_pp_hash_after_block_comment(t : T?) {
+    t |> equal(pp_tokens("x /*\n*/ #define\n/* a\n */ #y"),
+               ["IDENTIFIER:x/b", "#:#/s", "IDENTIFIER:define/", "#:#/sb", "IDENTIFIER:y/"])
+}
+
 [test(description = "lex_unfiltered lexes --mode pp once with no filter: a GNU extension the filter drops stays, each token keeps its flags and an identifier its text")]
 def test_compare_pp_unfiltered(t : T?) {
     var inscope typedefs : table<string; int>

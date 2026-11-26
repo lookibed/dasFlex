@@ -24,7 +24,7 @@ struct FlexToken {
     text : string       //!< the matched text once `text()` built it; "" until then
     sym : int           //!< the symbol `intern(lx)` found; -1 if none, from `flex_open` on
     has_space : bool    //!< a skipping rule ran since the previous token
-    at_bol : bool       //!< the first token of the input or of its line
+    at_bol : bool       //!< the first token of the input, or one a newline separates from the previous token
 }
 
 //! The scanner state.
@@ -47,6 +47,7 @@ struct FlexLexer {
     groups_re : uint64          //!< the regex that filled `groups`, 0 when none did
     space_pending : bool        //!< the next token's `has_space`
     bol_pending : bool          //!< the next token's `at_bol`
+    bol_saved : bool            //!< `bol_pending` as a rule body keeps it across skipped text; the scanner never touches it
 }
 
 //! Open `src` for scanning: the bytes are copied once, the string may go.

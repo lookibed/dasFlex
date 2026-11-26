@@ -22,9 +22,13 @@ Both tests read the line and column the token take already wrote, so the flags c
 writes per token, nothing per byte, and every scanner shape - each `mode`, `matcher` and `dispatch`
 - shares the code and gives the same flags.
 
-The definitions are the lexer's, not the C standard's or chibicc's: a newline inside a block comment
-sets `at_bol`, where translation phase 3 replaces the comment with one space and chibicc leaves the
-flag unset, and `has_space` stays set across a newline, which chibicc clears.
+The scanner cannot tell a comment from other skipped text, so a newline inside a block comment
+would set `at_bol`. Translation phase 3 replaces the comment with one space, and gcc and clang take
+no directive after `x /*` newline `*/ #define`, so the C example's comment rules keep `bol_pending`
+in `bol_saved` at `/*` and put it back at `*/` - a field of the lexer for rule bodies that the
+scanner never touches - so the token after the comment is `at_bol` exactly when it would be with
+the comment one space. `has_space` stays set across a newline, as gcc and clang have it; chibicc clears it, the
+one place these flags differ from chibicc's.
 
 ## Preprocessing tokens {#pp-tokens}
 
