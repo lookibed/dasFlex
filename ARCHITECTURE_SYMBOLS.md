@@ -27,7 +27,9 @@ filled (a longer name takes a block of its own). `intern_terminated` looks up `l
 zero byte follows: one native lookup hashes and compares them, so a hit is one call into the
 runtime. `intern(lx)` gets that zero byte in place: it saves the byte after the token, writes a
 zero there, looks the token up and writes the byte back, so the lexer's bytes are the input again
-when it returns. `flex_open` keeps one zero byte past the input, so a token that ends the input has
+when it returns. The byte goes back before a miss inserts the name - the insert copies the name by
+its length and needs no zero after it - so a panic in the insert, a locked table, leaves the input
+as it was too. `flex_open` keeps one zero byte past the input, so a token that ends the input has
 a byte after it too; the raw `intern(syms, src, start, len)` reads a source it may not write and
 copies the span into a scratch buffer instead. A native string ends at its first zero byte, so the
 table finds a name by its bytes up to the first zero: an entry records whether it holds a zero
@@ -76,6 +78,9 @@ the files a parser lexes in turn.
 The arena and the native keys point into the interner's own blocks, so a `FlexSymbols` moves (`<-`)
 safely - the blocks stay where they are - while a clone (`:=`) would copy the blocks and keep keys
 into the original's.
+
+The two shapes give the same ids and texts for one sequence of names; `tests/flex_symbols_tests.das`
+runs the interner's tests in each shape, the lexer's `intern(lx)` included.
 
 `FlexLexer.syms` is a field of the lexer, not a global, so two lexers never share symbols by
 accident. `intern(lx)` interns the current token's span and keeps the id in `tok.sym`, which every
