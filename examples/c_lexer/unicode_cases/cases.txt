@@ -8,8 +8,9 @@
 #   lexer   clang      - the lexer produces the clang stream: kinds mapped to the lexer's, each
 #                        token's byte range equal
 #           error N    - the clang tokens that start before byte N, each cut at N, then the lexer
-#                        fails with its cursor at byte N (an `unknown` token in clang's stream, or
-#                        a character clang reports inside an identifier it keeps whole)
+#                        fails with its cursor at byte N (an `unknown` token in clang's stream, a
+#                        character clang reports inside an identifier it keeps whole, or the quote
+#                        of a literal holding an escape C11 6.4.4.4 does not list)
 #           none ...   - out of scope for a lexer of preprocessed text, recorded only
 #   tok     clang's kind, byte offset, byte length, spelling (bytes outside UTF-8 as \xNN)
 
@@ -237,10 +238,10 @@ tok	string_literal	46	12	"\U00110000"
 tok	semi	58	1	;
 
 case	literal_ucn_incomplete
-about	an incomplete UCN in a string: clang lexes a string token and reports the escape; the lexer, whose escape rule names the escapes C allows, refuses the literal
+about	an incomplete UCN in a string: clang lexes any backslash pair inside a literal and reports the escape; the lexer's escape rule names only the escapes C11 6.4.4.4 lists, so it refuses the literal at its quote
 clang	reject - 1:18 error: incomplete universal character name
 gcc	reject - 1:23 error: incomplete universal character name \u00
-lexer	none - escape validity belongs to the literal's conversion; clang lexes any backslash pair inside a literal, the example's rules only the escapes C11 6.4.4.4 lists
+lexer	error 16
 tok	const	0	5	const
 tok	char	6	4	char
 tok	star	11	1	*

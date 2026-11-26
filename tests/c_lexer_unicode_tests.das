@@ -10,9 +10,11 @@ require math
 require _flex_test_helpers
 require ../examples/c_lexer/c_lexer.das
 require ../examples/c_lexer/c_lexer_variants.das
+require ../examples/c_lexer/c_lex_compare.das
 
 // The C lexer example against the Unicode case table in examples/c_lexer/unicode_cases/cases.txt:
-// every in-scope case's input lexed by every scanner shape gives clang's token stream.
+// every in-scope case's input lexed by every scanner shape gives clang's token stream, and the
+// other lexers of c_lex_compare.das give the stream of the rules.
 
 //! one token of clang's stream: its kind name and byte range
 struct CaseTok {
@@ -175,4 +177,36 @@ def test_ucn_past_unicode(t : T?) {
     t |> equal(default_stream("a\\U00110000 b"), ["a", "error 1"])
     t |> equal(default_stream("\\UFFFFFFFF"), ["error 0"])
     t |> equal(default_stream("a\\U000EFFFD"), ["a\\U000EFFFD"])
+}
+
+//! `kind text line` per token
+def private tok_lines(toks : array<Tok>) : array<string> => [for (tk in toks); "{tk.kind} {tk.text} {tk.line}"]
+
+//! whether a token of `toks` is an identifier holding a byte past 127
+def private has_utf8_identifier(toks : array<Tok>) : bool {
+    for (tk in toks) {
+        continue if (tk.kind != int(CTok.IDENTIFIER) && tk.kind != int(CTok.TYPEDEF_NAME))
+        for (ch in tk.text) {
+            return true if (ch >= 0x80)
+        }
+    }
+    return false
+}
+
+[test(description = "on every case input the hand-written lexer (--mode probe) gives the token stream of c_next, up to the byte the rules stop at; daslib/regex rule by rule (--mode regex) too, except on an input whose identifiers hold UTF-8, which its rules do not take")]
+def test_probe_and_regex_follow_the_rules(t : T?) {
+    let cases <- read_cases()
+    var rules <- regex_rules()
+    var inscope typedefs : table<string; int>
+    var regex_checked = 0
+    for (c in cases) {
+        let src = fread(path_join(cases_dir(), "{c.name}.c"))
+        var inscope rule_toks <- lex_flex(src, typedefs, "flex")
+        var inscope want <- tok_lines(rule_toks)
+        t |> equal(tok_lines(lex_probe(src, typedefs)), want, "{c.name} (probe)")
+        continue if (has_utf8_identifier(rule_toks))
+        regex_checked++
+        t |> equal(tok_lines(lex_regex(src, typedefs, rules)), want, "{c.name} (regex)")
+    }
+    t |> success(regex_checked >= 20, "{regex_checked} cases checked in regex mode")
 }

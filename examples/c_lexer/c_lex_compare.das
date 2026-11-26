@@ -13,6 +13,8 @@ options indenting = 4
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
 // `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`). Every mode but `flex`
 // reaches its scanner through the function `c_scanner` returns, one indirect call per token more.
+// The `regex` mode is ASCII + `$` + UCN escapes: `daslib/regex` has no code-point escape, so an
+// identifier holding a UTF-8 character past ASCII, or a byte order mark later than offset 0, stops it.
 //
 //   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N [--count]) files...
 //   (`-- --help` lists the flags)
@@ -70,6 +72,33 @@ def ident_unit(d : array<uint8>#; i : int; first : bool) : int {
         return (first ? is_ident_start(c) : is_ident_char(c)) ? 1 : 0
     }
     return c == '\\' ? ucn_len(d, i) : utf8_len(d, i)
+}
+
+//! the byte length of the escape at `j` the literal rules take (`ES`): `\\` and one of `'"?\\abfnrtv`
+//! or an octal digit, `\\x` and a hex digit, or a UCN - the rest of an octal or hex run is plain text
+//! to the rule; 0 when none starts there
+def escape_len(d : array<uint8>#; j : int) : int {
+    return 0 if (j + 1 >= length(d))
+    let e = int(d[j + 1])
+    return 2 if (find("'\"?\\abfnrtv01234567", e) >= 0)
+    return 3 if (e == 'x' && j + 2 < length(d) && is_hex(int(d[j + 2])))
+    return ucn_len(d, j)
+}
+
+//! the byte length of the literal whose opening quote is at `i`, both quotes included, when the
+//! rules take it - closed on its line, every escape one `escape_len` takes, a character literal not
+//! empty - and 0 when they do not
+def literal_len(d : array<uint8>#; i : int) : int {
+    let quote = int(d[i])
+    var j = i + 1
+    while (j < length(d) && int(d[j]) != quote) {
+        return 0 if (int(d[j]) == '\n')
+        let step = int(d[j]) == '\\' ? escape_len(d, j) : 1
+        return 0 if (step == 0)
+        j += step
+    }
+    return 0 if (j >= length(d) || (quote == '\'' && j == i + 1))
+    return j + 1 - i
 }
 
 //! the runtime's error text for the byte at `at` no rule takes
@@ -133,25 +162,24 @@ def lex_probe(text : string; typedefs : table<string; int>) : array<Tok> {  // n
             }
             let start = i
             let u8_string = c == 'u' && i + 2 < n && int(d[i + 1]) == '8' && int(d[i + 2]) == '"'
-            if (c == '"' || c == '\'' || u8_string
-                || ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n
-                    && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))) {
-                if (c != '"' && c != '\'') {
-                    i += u8_string ? 2 : 1
+            let one_prefix = ((c == 'L' || c == 'u' || c == 'U') && i + 1 < n
+                              && (int(d[i + 1]) == '"' || int(d[i + 1]) == '\''))
+            let prefix = u8_string ? 2 : one_prefix ? 1 : 0
+            if (c == '"' || c == '\'' || prefix > 0) {
+                // a literal the rules refuse fails at its quote; a prefix before it is an identifier
+                let len = literal_len(d, start + prefix)
+                if (len > 0) {
+                    let quote = int(d[start + prefix])
+                    i = start + prefix + len
+                    out |> emplace(
+                                   Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
+                                       text = slice(d, start, i), line = line))
+                    continue
                 }
-                let quote = int(d[i])
-                i++
-                while (i < n && int(d[i]) != quote) {
-                    if (int(d[i]) == '\\') {
-                        i++
-                    }
-                    i++
+                if (prefix == 0) {
+                    print("{probe_error(text, i, line, i - line_start + 1)}\n")
+                    break
                 }
-                i++
-                out |> emplace(
-                               Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
-                                   text = slice(d, start, i), line = line))
-                continue
             }
             if (ident_unit(d, i, true) > 0) {
                 var ascii = true
@@ -293,7 +321,7 @@ def regex_rules() : array<ReRule> {
                   ["#[^\n]*", "-1"],
                   ["//[^\n]*", "-1"],
                   ["/\\*", "-4"],
-                  ["[a-zA-Z_][a-zA-Z_0-9]*", "-2"],
+                  ["(?:[a-zA-Z_$]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})(?:[a-zA-Z_$0-9]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\})*", "-2"],
                   ["0[xX][a-fA-F0-9]+", "{int(CTok.I_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+(ull|uLL|Ull|ULL|llu|llU|LLu|LLU|ul|uL|Ul|UL|lu|lU|Lu|LU|ll|LL|u|U|l|L)", "{int(CTok.I_CONSTANT)}"],
                   ["[1-9][0-9]*", "{int(CTok.I_CONSTANT)}"],
@@ -301,7 +329,7 @@ def regex_rules() : array<ReRule> {
                   ["0[0-7]*", "{int(CTok.I_CONSTANT)}"],
                   ["0[0-7]*(ull|uLL|Ull|ULL|llu|llU|LLu|LLU|ul|uL|Ul|UL|lu|lU|Lu|LU|ll|LL|u|U|l|L)",
                    "{int(CTok.I_CONSTANT)}"],
-                  ["(u|U|L)?'([^'\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))+'",
+                  ["(u|U|L)?'([^'\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))+'",
                    "{int(CTok.I_CONSTANT)}"],
                   ["[0-9]+([Ee][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
                   ["[0-9]+([Ee][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
@@ -320,7 +348,7 @@ def regex_rules() : array<ReRule> {
                    "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)", "{int(CTok.F_CONSTANT)}"],
                   ["0[xX][a-fA-F0-9]+\\.([Pp][+-]?[0-9]+)(f|F|l|L)", "{int(CTok.F_CONSTANT)}"],
-                  ["(u8|u|U|L)?\"([^\"\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+)))*\"",
+                  ["(u8|u|U|L)?\"([^\"\\\\\n]|(\\\\([\'\"?\\\\abfnrtv]|[0-7]+|x[a-fA-F0-9]+|u[a-fA-F0-9]\{4\}|U[a-fA-F0-9]\{8\})))*\"",
                    "{int(CTok.STRING_LITERAL)}"],
                   ["\\.\\.\\.", "{int(CTok.ELLIPSIS)}"],
                   [">>=", "{int(CTok.RIGHT_ASSIGN)}"],
@@ -360,8 +388,9 @@ def regex_rules() : array<ReRule> {
 def lex_regex(text : string; typedefs : table<string; int>;
               var rules : array<ReRule>) : array<Tok> {
     var out : array<Tok>
-    var pos = 0
+    var pos = contains_utf8_bom(text) ? 3 : 0
     var line = 1
+    var line_start = 0
     peek_data(text) $(d) {
         let n = length(d)
         while (pos < n) {
@@ -374,22 +403,28 @@ def lex_regex(text : string; typedefs : table<string; int>;
                     best = ri
                 }
             }
+            let kind = best < 0 ? 0 : rules[best].kind
+            if (kind == -2 && best_end > pos) {
+                // an identifier holding a UCN ends before the first character Annex D does not allow there
+                best_end = pos + c_ident_prefix(d, pos, best_end)
+            }
             if (best < 0 || best_end <= pos) {
-                print("regex lexer: no rule at {pos} line {line}\n")
+                print("{probe_error(text, pos, line, pos - line_start + 1)}\n")
                 break
             }
             for (p in range(pos, best_end)) {
                 if (int(d[p]) == '\n') {
                     line++
+                    line_start = p + 1
                 }
             }
-            let kind = rules[best].kind
             if (kind == -4) {
                 // a comment: skip to the closing */
                 var p = best_end
                 while (p + 1 < n && !(int(d[p]) == '*' && int(d[p + 1]) == '/')) {
                     if (int(d[p]) == '\n') {
                         line++
+                        line_start = p + 1
                     }
                     p++
                 }
