@@ -137,31 +137,39 @@ compile without a cache pays it once per `[flex]` scanner.
 ## Identifiers as symbols
 
 What finding identifiers by their bytes costs against the string per identifier: before = `main`
-(7f2285f), after = `intern` (fb66b07), the same driver in both. Before, the identifier rule built
-the word's string (`text()`) and looked it up in `KEYWORDS` and in the typedef table; after, it
-interns the span (`flex/flex_symbols.das`) and emits the symbol's kind - keywords and typedef names
-are kinds of symbols - and the token arrays of `--mode flex` and `--mode probe` keep an identifier
-as its symbol, with no string (the probe interns through the same interner). The interner takes the
-tier's shape: in the interpreter a native `table<string; int>` that `intern(lx)` reads with the
-token ended by a zero byte in place, under the JIT the open-addressing table in daslang code
-(`ARCHITECTURE_SYMBOLS.md#symbols`). One run, alone on a quiet machine (cpu busy 1%), daslang
-0.6.6; each cell is the median of 3 rounds, the two trees in alternating order, every round one
-process per tree, tier, driver and file, each process the median of 9 passes; JIT is
-`-jit -jit-no-cache`. Ms; the round range stays within 4% of the cell except four JIT cells:
-hand-written doom_am_map before (7%), count only doom_p_mobj after (6%), hand-written
-wasm3_m3_parse after (6%), hand-written doom_p_mobj after (5%).
+(7f2285f), after = `intern` (d822d20). Before, the identifier rule built the word's string
+(`text()`) and looked it up in `KEYWORDS` and in the typedef table; after, it interns the span
+(`flex/flex_symbols.das`) and emits the symbol's kind - keywords and typedef names are kinds of
+symbols - and the token arrays of `--mode flex` and `--mode probe` keep an identifier as its symbol,
+with no string (the probe interns through the same interner). The interner takes the tier's shape:
+in the interpreter a native `table<string; int>` that `intern(lx)` reads with the token ended by a
+zero byte in place, under the JIT the open-addressing table in daslang code
+(`ARCHITECTURE_SYMBOLS.md#symbols`).
 
-| measure | interp before | interp after | jit before | jit after |
-|---|---|---|---|---|
-| count only, doom_am_map.i | 10.165 | 11.015 (+8%) | 0.695 | 0.553 (-20%) |
-| count only, doom_p_mobj.i | 8.695 | 9.426 (+8%) | 0.607 | 0.490 (-19%) |
-| count only, wasm3_m3_parse.i | 10.445 | 10.818 (+4%) | 0.707 | 0.509 (-28%) |
-| token array, doom_am_map.i | 11.621 | 13.168 (+13%) | 0.929 | 0.785 (-16%) |
-| token array, doom_p_mobj.i | 9.952 | 11.089 (+11%) | 0.782 | 0.644 (-18%) |
-| token array, wasm3_m3_parse.i | 11.923 | 12.622 (+6%) | 0.931 | 0.741 (-20%) |
-| hand-written, doom_am_map.i | 8.433 | 9.678 (+15%) | 1.201 | 1.084 (-10%) |
-| hand-written, doom_p_mobj.i | 6.878 | 7.918 (+15%) | 0.981 | 0.837 (-15%) |
-| hand-written, wasm3_m3_parse.i | 8.378 | 9.293 (+11%) | 1.211 | 1.038 (-14%) |
+`main`'s scan never stores a name, so the fair baseline is what a front end on `main` would do with
+its tokens - a typedef table, hide sets: "main: token array + string interning (scratch driver on
+main)" is `--mode flex` of `main`'s `c_lex_compare.das` followed by a `table<string; int>` insert of
+every IDENTIFIER and TYPEDEF_NAME token's text on a miss and a lookup on a hit, timed together, a
+mode added to a scratch copy of `main` and committed nowhere. One run, alone on a quiet machine (cpu
+busy 3%), daslang 0.6.6; each cell is the median of 3 rounds, the two trees in alternating order,
+every round one process per tree, tier, driver and file, each process the median of 9 passes; JIT
+is `-jit -jit-no-cache`. Ms; the round range stays within 5% of the cell except two JIT cells: main
+count only doom_p_mobj (8%) and intern token array doom_am_map (6%).
+
+| measure | interp doom_am_map.i | interp doom_p_mobj.i | interp wasm3_m3_parse.i | jit doom_am_map.i | jit doom_p_mobj.i | jit wasm3_m3_parse.i |
+|---|---|---|---|---|---|---|
+| main: count only | 10.212 | 8.676 | 10.385 | 0.692 | 0.615 | 0.707 |
+| main: token array | 11.676 | 9.719 | 12.073 | 0.947 | 0.785 | 0.949 |
+| main: token array + string interning (scratch driver on main) | 12.147 | 10.189 | 12.022 | 1.144 | 0.961 | 1.088 |
+| intern: count only | 10.836 (+6%) | 9.543 (+10%) | 10.655 (+3%) | 0.541 (-22%) | 0.477 (-22%) | 0.501 (-29%) |
+| intern: token array | 13.376 (+10%) | 10.940 (+7%) | 12.863 (+7%) | 0.774 (-32%) | 0.640 (-33%) | 0.715 (-34%) |
+| intern: probe (hand-written) | 9.658 | 8.168 | 9.059 | 1.095 | 0.854 | 1.021 |
+
+The count-only change is against `main`'s count only, the token-array change against the fair
+baseline. The string interning adds 0.47 ms to `main`'s token array in the interpreter on
+doom_am_map.i and doom_p_mobj.i, and stays inside the round range on wasm3_m3_parse.i; under the
+JIT it adds 0.14-0.20 ms. Against that baseline `intern`'s token array takes 7-10% longer in the
+interpreter and 32-34% less time under the JIT.
 
 Heap probe, one count-only scan (`--count` prints it as `HEAP`): before, 7 009 / 6 478 / 7 498
 string-heap allocations per pass on the three files - one per identifier; after, none in either
@@ -170,16 +178,16 @@ growing to 2 669 / 2 734 / 1 273 distinct names, since every pass opens a fresh 
 under the JIT. `tests/c_lexer_tests.das` holds the property: twenty copies of a source allocate what
 one does, and no string.
 
-The JIT gains 19-28% on the count-only scan. About 40% of the identifiers of a preprocessed file are
+The JIT gains 22-29% on the count-only scan. About 40% of the identifiers of a preprocessed file are
 first occurrences (2 669 distinct names in 7 009 on doom_am_map.i), so the table holds every name
 rather than a few hundred keywords and typedef names, and each first occurrence adds an entry.
 
-The interpreter stays 4-8% slower than `main` on the count-only scan, from 13-25% with the probing
+The interpreter stays 3-10% slower than `main` on the count-only scan, from 13-25% with the probing
 table in both tiers (the run of f48271a). A native hit costs about what the string and the two table
 lookups of `main` cost; the rest is the first occurrences, which `main` never stored: each copies the
 name into the arena, appends an entry and inserts it, about 170 ns over a hit (indicative, a loop
 over the identifiers of one file). The hand-written probe interns through the raw `intern`, which in
-the native shape copies the span into a scratch buffer first, hence its 11-15%.
+the native shape copies the span into a scratch buffer first.
 
 Variants tried against this one, count-only scan, three files, 3 rounds in alternating order, each a
 normal job beside other work (indicative; ms on doom_am_map.i, then the change against `main` on the

@@ -109,11 +109,13 @@ is the ledger's "Unicode in the C lexer". The C lexer in `examples/c_lexer` does
 
 The table predates identifiers as symbols: the identifier rule now interns the token's bytes and
 emits its symbol's kind, so neither the scan nor the token array builds a string per identifier
-(7 009 string allocations per count-only pass of doom_am_map.i before, none after). Under the JIT
-that takes 19-28% off the count-only rows and 16-20% off the token-array rows. The interpreter
-looks a name up in a native table, the token ended with a zero byte in place, and keeps a copy of
-every new name; the count-only rows take 4-8% longer than with the string per identifier, the
-token-array rows 6-13% (ledger: "Identifiers as symbols").
+(7 009 string allocations per count-only pass of doom_am_map.i before, none after). The fair
+baseline for the token array is what a front end on `main` does: the token array, then every
+identifier interned by its string in a table. Against it the token-array rows take 32-34% less
+time under the JIT and 7-10% more in the interpreter, which looks a name up in a native table, the
+token ended with a zero byte in place, and keeps a copy of every new name; the count-only rows take
+22-29% less under the JIT and 3-10% more in the interpreter than `main`'s, which stores no name
+(ledger: "Identifiers as symbols").
 
 Install: `daspkg install github.com/lookibed/dasFlex`, then `require flex/flex_macro`.
 Run the tests from a daslang checkout: `daslang -load_module <dasFlex> dastest/dastest.das -- --test <dasFlex>/tests`.
