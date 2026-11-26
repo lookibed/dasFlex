@@ -148,12 +148,14 @@ def intern(var lx : FlexLexer) : int {
     }
     unsafe {
         let p = lx.data + lx.tok.start
-        var after = lx.data + lx.tok.start + lx.tok.len
+        var after = lx.data + (lx.tok.start + lx.tok.len)
         let saved = *after
         *after = 0u8
         var id = lx.syms.ids?[reinterpret<string>(p)] ?? -1
         *after = saved
-        if (id < 0 || lx.syms.entries[id].plain_len != lx.tok.len) {
+        if (id < 0) {
+            id = intern_new(lx.syms, p, lx.tok.len)
+        } elif (lx.syms.entries[id].plain_len != lx.tok.len) {
             id = intern_unsettled(lx.syms, p, lx.tok.len, id)
         }
         lx.tok.sym = id

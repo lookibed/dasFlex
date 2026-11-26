@@ -316,9 +316,8 @@ let PUNCT2 <- {
 def flex_tokens(var lx : FlexLexer; scan : block<(var lx : FlexLexer) : bool>) : array<Tok> {
     var out : array<Tok>
     while (invoke(scan, lx)) {
-        let sym = lx.tok.sym
-        out |> emplace(Tok(kind = lx.tok.kind, text = sym >= 0 ? "" : text(lx), line = lx.tok.line,
-                           sym = sym))
+        out |> emplace(Tok(kind = lx.tok.kind, text = lx.tok.sym >= 0 ? "" : text(lx), line = lx.tok.line,
+                           sym = lx.tok.sym))
     }
     return <- out
 }

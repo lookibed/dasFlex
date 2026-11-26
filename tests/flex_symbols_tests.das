@@ -308,6 +308,24 @@ def test_native_zero_byte_names(t : T?) {
     delete bytes
 }
 
+[test(description = "a name interned before names that hold a zero byte after it keeps its id: the names sharing its bytes up to the zero join it, and it and each of them are found again, in both shapes")]
+def test_zero_byte_names_after_prefix(t : T?) {
+    var bytes <- array<uint8>(uint8('a'), 0u8, uint8('b'), uint8('a'), 0u8, uint8('c'))
+    let p = unsafe(addr<uint8 const?>(bytes[0]))
+    for (shape in SHAPES) {
+        var syms <- flex_symbols(shape = shape)
+        let a = intern(syms, p, 0, 1)
+        let ab = intern(syms, p, 0, 3)
+        let ac = intern(syms, p, 3, 3)
+        t |> equal([a, ab, ac], [0, 1, 2])
+        t |> equal([intern(syms, p, 3, 1), intern(syms, p, 0, 3), intern(syms, p, 3, 3), intern(syms, p, 0, 1)],
+                   [a, ab, ac, a])
+        t |> equal(symbol_count(syms), 3)
+        t |> equal(symbol_text(syms, a), "a")
+    }
+    delete bytes
+}
+
 [test(description = "a native interner copies a name on its miss, so it reads one source after another with no flex_symbols_detach, and a name of the first source keeps its id and text after that source is gone")]
 def test_native_any_source(t : T?) {
     var syms <- FlexSymbols(shape = FlexSymbolsShape.native)

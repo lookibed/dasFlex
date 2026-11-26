@@ -13,13 +13,12 @@ require flex/flex_tier
 struct FlexSymbol {
     key : uint64    //!< a name of up to 8 bytes packed; else its last 8
     hash : uint
-    start : int     //!< the offset in the source; -1: `names` or `view` holds it
+    start : int     //!< the offset in the source; -1: `names` or `view` holds it; `TEXT_BUILT`: native, `names` holds it too
     len : int
     kind : int
     @do_not_delete view : uint8 const? //!< native shape: the name's copy in `arena`, a zero after it
     plain_len : int         //!< native shape: `len`, or -1 for a name holding a zero byte
     next_same : int         //!< native shape: the next name the same zero-ended prefix finds; -1
-    built : bool            //!< native shape: `symbol_text` built the text
 }
 
 //! the shape of a `FlexSymbols`: the zero value takes the one of the
@@ -83,6 +82,9 @@ let private SYMBOL_MULTIPLIER = 0x9E3779B97F4A7C15ul
 
 //! the bytes of one arena block; a longer name takes a block of its own
 let private ARENA_BLOCK = 16384
+
+//! the `start` of a native entry whose text `names` holds
+let private TEXT_BUILT = -2
 
 //! the symbol of the name `p[0..len)`, added when it is not there:
 //! as the span at `start` of the source, or, when `start` is -1, as
@@ -162,22 +164,29 @@ def private place_all(var syms : FlexSymbols; cap : int) {
 
 //! Native shape: the symbol of the `len` bytes at `p`, a zero after
 //! them, when the table's lookup of the bytes up to the first zero gave
-//! `first` and did not settle it - a miss (-1), or a name holding a
-//! zero byte: the names sharing that prefix compared in full, the name
-//! added when none is it, its bytes copied into the arena.
+//! `first` (>= 0) and did not settle it: the names sharing that prefix
+//! compared in full, the name added in front of them when none is it.
 [arch(at="../ARCHITECTURE_SYMBOLS.md#symbols")]
 def intern_unsettled(var syms : FlexSymbols; p : uint8 const?; len, first : int) : int {
-    if (first >= 0) {
-        var e = first
-        while (e >= 0) {
-            if (syms.entries[e].len == len) {
-                unsafe {
-                    return e if (memcmp(reinterpret<void?>(syms.entries[e].view), reinterpret<void?>(p), len) == 0)
-                }
+    var e = first
+    while (e >= 0) {
+        if (syms.entries[e].len == len) {
+            unsafe {
+                return e if (memcmp(reinterpret<void?>(syms.entries[e].view), reinterpret<void?>(p), len) == 0)
             }
-            e = syms.entries[e].next_same
         }
+        e = syms.entries[e].next_same
     }
+    let id = intern_new(syms, p, len)
+    syms.entries[id].next_same = first
+    return id
+}
+
+//! Native shape: the `len` bytes at `p` as a new symbol, copied into
+//! the arena with a zero after them; the table's key of their
+//! zero-ended prefix names it from then on
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols")]
+def intern_new(var syms : FlexSymbols; p : uint8 const?; len : int) : int {
     if (len >= syms.arena_left) {
         var chunk : array<uint8>
         chunk |> resize(max(ARENA_BLOCK, len + 1))
@@ -192,17 +201,11 @@ def intern_unsettled(var syms : FlexSymbols; p : uint8 const?; len, first : int)
         view[len] = 0u8
         syms.arena_at += len + 1
         syms.arena_left -= len + 1
-        let prefix = reinterpret<string>(view)
-        let plain = length(prefix) == len ? len : -1
         syms.entries |> push(FlexSymbol(start = -1, len = len, kind = syms.fresh_kind, view = view,
-                                        plain_len = plain, next_same = -1))
-        if (first < 0) {
-            syms.ids[prefix] = id
-            return id
-        }
+                                        plain_len = length(reinterpret<string>(view)) == len ? len : -1,
+                                        next_same = -1))
+        syms.ids[reinterpret<string>(view)] = id
     }
-    syms.entries[id].next_same = syms.entries[first].next_same
-    syms.entries[first].next_same = id
     return id
 }
 
@@ -212,7 +215,8 @@ def intern_unsettled(var syms : FlexSymbols; p : uint8 const?; len, first : int)
 [arch(at="../ARCHITECTURE_SYMBOLS.md#symbols"), inline]
 def intern_terminated(var syms : FlexSymbols; p : uint8 const?; len : int) : int {
     let first = syms.ids?[unsafe(reinterpret<string>(p))] ?? -1
-    return first if (first >= 0 && syms.entries[first].plain_len == len)
+    return intern_new(syms, p, len) if (first < 0)
+    return first if (syms.entries[first].plain_len == len)
     return intern_unsettled(syms, p, len, first)
 }
 
@@ -255,7 +259,7 @@ def intern_name(var syms : FlexSymbols; name : string) : int {
     if (id == known) {
         syms.names |> resize(id + 1)
         syms.names[id] = name
-        syms.entries[id].built = true
+        syms.entries[id].start = TEXT_BUILT
     }
     return id
 }
@@ -278,7 +282,7 @@ def symbol_text(var syms : FlexSymbols; id : int) : string {
         syms.names |> resize(id + 1)
     }
     let p = ent.start >= 0 ? unsafe(syms.src + ent.start) : ent.view
-    if (ent.start >= 0 || (p != null && !ent.built)) {
+    if (ent.start >= 0 || (p != null && ent.start != TEXT_BUILT)) {
         if (ent.len > 0) {
             unsafe {
                 map_to_ro_array(reinterpret<void?>(p), ent.len) $(v : array<uint8>#) {
@@ -286,11 +290,12 @@ def symbol_text(var syms : FlexSymbols; id : int) : string {
                 }
             }
         }
-        syms.entries[id].built = true
     }
     if (ent.start >= 0) {
         syms.entries[id].start = -1
         syms.in_source--
+    } elif (p != null) {
+        syms.entries[id].start = TEXT_BUILT
     }
     return syms.names[id]
 }

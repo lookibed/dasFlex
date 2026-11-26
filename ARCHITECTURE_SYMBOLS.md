@@ -33,16 +33,19 @@ as it was too. `flex_open` keeps one zero byte past the input, so a token that e
 a byte after it too; the raw `intern(syms, src, start, len)` reads a source it may not write and
 copies the span into a scratch buffer instead. A native string ends at its first zero byte, so the
 table finds a name by its bytes up to the first zero: an entry records whether it holds a zero
-byte, a hit on an entry without one whose length is the token's is the name, and any other result
-- a miss, or a name holding a zero byte - walks the entries sharing that prefix with `memcmp` and
-adds the name to them when none is it. A miss copies the name into the arena once; the interner
-then reads no source, so it binds none.
+byte, a hit on an entry without one whose length is the token's is the name, any other hit - on an
+entry holding a zero byte, or of another length - walks the entries sharing that prefix with
+`memcmp` and adds the name in front of them when none is it, the table's key of the prefix then
+naming the newest, and a miss adds the name with no walk. A miss copies the name into the arena
+once; the interner then reads no source, so it binds none.
 
 Each shape wins in its own tier. In the interpreter every statement is a simulation node, and the
 probing hash and probe are about twenty of them per name - 220 ns per hit, against 100 ns for the
 native lookup, about what the string and the two table lookups it replaces cost (indicative, a hit
-loop over the identifiers of one file). A native miss costs about 170 ns more than a hit: the copy,
-the entry and the insert, which hashes the name a second time. Under the JIT the probing code compiles to a few
+loop over the identifiers of one file). A native miss costs about 280 ns more than a hit: the
+copy, the zero-byte check, a 40-byte entry and the insert, which hashes the name a second time -
+where a string-keyed table's miss, the lookup then the insert, costs about 150 ns more than its
+hit. Under the JIT the probing code compiles to a few
 instructions (12 ns per hit) while the native lookup stays a call into the runtime that hashes the
 name byte by byte (27 ns), and a native miss pays the copy and a second hash to insert. Folding the
 symbol hash into the scanner's byte loop, so the interner skips the hash, costs every byte of the
