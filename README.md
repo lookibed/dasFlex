@@ -99,9 +99,8 @@ chibicc's `tokenize()` does work the dasFlex rows do not: it allocates a token p
 `tok`, the arena in `fast`), decodes every string literal into a fresh buffer and gives it a
 `calloc`'d array type, and numbers lines in a second pass over the token list; it does not tell keywords from identifiers and has no typedef
 lookup. Against `fast` the count-only JIT row takes 2.49-2.74x less time, the token-array JIT row
-1.71-1.80x less. The C lexer in `examples/c_lexer` does not carry `$` or Unicode in identifiers,
-`#` and `##` tokens, or chibicc's `has_space` / `at_bol` flags. Method and the step-by-step history:
-`PERF_LEDGER.md`.
+1.71-1.80x less. The C lexer in `examples/c_lexer` does not carry `#` and `##` tokens, or chibicc's
+`has_space` / `at_bol` flags. Method and the step-by-step history: `PERF_LEDGER.md`.
 
 Install: `daspkg install github.com/lookibed/dasFlex`, then `require flex/flex_macro`.
 Run the tests from a daslang checkout: `daslang -load_module <dasFlex> dastest/dastest.das -- --test <dasFlex>/tests`.
@@ -114,8 +113,10 @@ capture groups: `tutorials/03_groups.das`.
 The automaton reads UTF-8 bytes. A literal past ASCII is its bytes, `.` is one code point, and
 `\uHHHH` / `\UHHHHHHHH` name a code point - outside a set, its bytes; inside one, the set becomes
 a set of code points: `[a-z\u00E0-\u00FF]+`, `[^\u0000-\u007F]`. Such a set matches well-formed
-UTF-8 only. A set without an escape stays a set of bytes, so `[а-я]` is written
-`[\u0430-\u044F]`.
+UTF-8 only, and of the letter escapes it takes only `\n \r \t \f \v` (`\w` or `\x41` there is an
+error). A set without an escape stays a set of bytes, so `[а-я]` is written `[\u0430-\u044F]`.
+`\u` is a code-point escape anywhere in a rule (`\u12` is an error, a literal backslash and `u` is
+`\\u`), and in a `%flex~` quoted pattern too: `"caf\u00e9"` is the word.
 
 The C lexer in `examples/c_lexer/` lexes Unicode as clang 18 does by default, checked against the
 table in `examples/c_lexer/unicode_cases/` (inputs, clang's token streams, gcc's verdicts):
@@ -125,8 +126,15 @@ table in `examples/c_lexer/unicode_cases/` (inputs, clang's token streams, gcc's
   and a byte that is not UTF-8 - a stray continuation, a cut sequence, an overlong form, an encoded
   surrogate - end the identifier and stop the lexer with that byte's line and column;
 - string and character literals take `\u` / `\U` escapes and the `u8`, `u`, `U`, `L` prefixes; their
-  bytes are kept as they are, invalid UTF-8 included, as clang keeps them;
+  bytes are kept as they are, invalid UTF-8 included, as clang keeps them; an escape C11 does not
+  list (`"\u00"`, `"\q"`) stops the lexer at the literal's quote, where clang lexes the literal and
+  reports the escape;
 - a byte order mark at offset 0 is skipped (`c_open`); U+FEFF later is an identifier character.
+
+`examples/c_lexer/c_lex_compare.das` prints the stream of every scanner shape, of the hand-written
+lexer (`--mode probe`, which takes the same identifiers, escapes and byte order mark) and of
+`daslib/regex` tried rule by rule (`--mode regex`); the `regex` mode is ASCII + `$` + UCN escapes,
+since `daslib/regex` has no code-point escape, so it stops at an identifier holding UTF-8.
 
 Where clang differs: it reads U+00A0 and the other Unicode spaces as whitespace (with a warning) and
 keeps an identifier whole while reporting a character Annex D excludes; the lexer stops there, as gcc

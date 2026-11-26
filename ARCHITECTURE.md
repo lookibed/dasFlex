@@ -64,8 +64,9 @@ parses; a set holding a code-point escape is a set of code points, spelled in by
 (`#code-points`). The inner loop therefore never decodes; it maps a byte to its class and the class to the
 next state. Columns are byte equivalence classes - the finest partition of 0..255 every edge of the
 NFA is a union of, with byte 10 always alone in its class so a scanner counts lines by the class it
-reads - so the transition table is `nstates x nclasses` (about seventy classes for the C lexer)
-rather than `nstates x 256`.
+reads - so the transition table is `nstates x nclasses` rather than `nstates x 256` (74 classes
+for the ASCII rules of the C lexer, 143 once its Annex D sets cut the lead and continuation bytes,
+`#c-unicode`).
 
 ## Code points in a byte automaton {#code-points}
 
@@ -77,8 +78,12 @@ and becomes a byte set for its ASCII members plus, per UTF-8 shape, a sequence o
 range splits at the encoded-length boundaries and wherever the continuation bytes below the first
 differing byte do not span `0x80..0xBF`, the way RE2 compiles a class, so the sequences are exact:
 no overlong form, no surrogate, nothing past U+10FFFF - malformed input `.` would let through stays
-out. A set without an escape stays a set of bytes; in a code-point set a byte past 127 and the
-class escapes `\w`, `\s`, `\d` are refused with their offset, since neither names code points.
+out. A set without an escape stays a set of bytes; in a code-point set a byte past 127 and every
+letter escape but `\n`, `\r`, `\t`, `\f`, `\v` - the classes `\w`, `\s`, `\d` and a byte escape such
+as `\x41` included - are refused with their offset, since none of them names a code point. `\u` and
+`\U` are code-point escapes everywhere in a rule, so `\u12` fails as naming no code point; a literal
+backslash before a `u` is `\\u`. The `%flex~` reader passes them through a quoted pattern
+unchanged, so `"caf\u00e9"` there is the four characters of the word.
 `build_nfa` and the group regex of a rule both read the rewritten text, so the automaton and the
 re-match agree and groups count the parentheses the rule writes; an offset a refusal names in a
 pattern holding escapes is one into the rewritten text.
@@ -224,8 +229,11 @@ the character. The decode runs in a rule body on those rare tokens, never in the
 (`#bytes`). Literal bodies stay bytes - clang keeps invalid UTF-8 inside a literal and only warns -
 and their escapes take `\u` and `\U`; a UCN's value is the literal's conversion, not the lexer's.
 `c_open` skips a byte order mark at offset 0, since a rule cannot see the offset and U+FEFF later
-in a file is an identifier character. The code-point sets give the example's tables 174 states and
-143 byte classes, from 112 and 74 for the ASCII rules.
+in a file is an identifier character. The code-point sets give the example's tables 177 states and
+143 byte classes, from 115 and 74 for the ASCII rules. Annex D is spelled three times - the
+`C11_IDENT_RANGES` / `C11_NOT_INITIAL` tables `c_ident_cut` reads, the two sets of the identifier
+rule, and the `L` / `A` definitions of `c_lexer_reader.das` - and `tests/c_lexer_unicode_tests.das`
+derives both set texts from the tables and holds the other two spellings to them.
 
 ## Not carried by this version {#not-carried}
 
@@ -236,5 +244,8 @@ in a file is an identifier character. The code-point sets give the example's tab
   `%flex~` form; a brace-less action is one line with no comment.
 - Unicode properties (`\p{L}`) and literal UTF-8 characters inside a set: a set is bytes unless it
   holds a code-point escape, so `[а-я]` is written `[\u0430-\u044F]` (`#code-points`).
+- A shared UTF-8 range splitter: the one in `flex/flex_regex.das` (`utf8_sequences`) has a private
+  twin in daslang's `modules/dasLR1/lr1/gbnf.das` (`add_cp_range`, `class_symbol`); a public home in
+  `daslib/utf8_utils` is proposed upstream, and each copy stays private until it lands.
 - In the C example, a UCN formed by `##` or `#` (the lexer reads preprocessed text), C23's
   `XID_Start`/`XID_Continue` identifiers, and clang's reading of Unicode spaces as whitespace.
