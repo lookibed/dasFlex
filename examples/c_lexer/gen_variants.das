@@ -59,7 +59,11 @@ def targets() : array<Target> {
         Target(file = "c_lexer_pp.das", module_name = "c_lexer_pp",
                purpose = ("The example's C11 rules as preprocessing tokens (C11 6.4): one pp-number "
                    + "rule in place of the\n// constant rules, `#` and `##` punctuators in place of "
-                   + "the skipped `#` line."),
+                   + "the skipped `#` line, every identifier an\n// IDENTIFIER - no keyword, no typedef "
+                   + "name - and any other character a PP_OTHER token. The input is\n// past "
+                   + "translation phase 2, its backslash-newline line splices removed: a skipping rule "
+                   + "cannot\n// remove one, since it sets the token flags. Neither this lexer nor "
+                   + "`c_next` takes digraphs\n// (`<:`, `%:`)."),
                pp = true,
                variants <- [Variant(name = "c_next_pp", mode = "pp")])]
 }
@@ -75,13 +79,33 @@ let private PP_HASH_RULES = slice(%stringify~
     }
 %%, 1)
 
-//! the pp-number of C11 6.4.8, in place of the first numeric constant rule; the sign set escapes its
-//! `-`, which `daslib/regex` drops from the edge of a set
+//! the pp-number of C11 6.4.8, in place of the first numeric constant rule: after a digit, the
+//! identifier-nondigits - `IDENT_CONTINUE` stands for the code points the identifier rule continues
+//! with, UCNs as the extended identifier rule spells them - dots and exponent signs; the sign set
+//! escapes its `-`, which `daslib/regex` drops from the edge of a set
 let private PP_NUMBER_RULE = slice(%stringify~
-    rule("\\.?[0-9]([0-9a-zA-Z_.]|[eEpP][+\\-])*") {
+    rule("\\.?[0-9]([0-9a-zA-Z_.IDENT_CONTINUE]|\\\\u[0-9a-fA-F]\{4\}|\\\\U[0-9a-fA-F]\{8\}|[eEpP][+\\-])*") {
         lx |> emit(CTok.PP_NUMBER)
     }
 %%, 1)
+
+//! C11 6.4p3: the last rule, any other character - one code point, or one byte no code point starts
+//! with - is a preprocessing token of its own
+let private PP_OTHER_RULE = slice(%stringify~
+    rule(".|[\\x80-\\xFF]") {
+        lx |> emit(CTok.PP_OTHER)
+    }
+%%, 1)
+
+//! the code points of the identifier rule's continue set in `lines`, as the rule spells them, past
+//! its ASCII `a-zA-Z_$0-9`; "" when no rule opens with that set
+def private ident_continue(lines : array<string>) : string {
+    let head = "][a-zA-Z_$0-9"
+    let at = find_index_if(lines) $(line) => starts_with(line, "    rule(\"[a-zA-Z_$") && find(line, head) > 0
+    return "" if (at < 0)
+    let from = find(lines[at], head) + length(head)
+    return slice(lines[at], from, find(lines[at], "]*\")", from))
+}
 
 //! whether the rule in `lines[first..last]` lexes a number: an integer or floating constant, the
 //! character constant left out
@@ -93,11 +117,18 @@ def private is_number_rule(lines : array<string>; first, last : int) : bool {
 }
 
 //! `rules` as preprocessing tokens: the skipped `#` line becomes the `#` and `##` punctuators, the
-//! numeric constant rules one pp-number rule; every other line as it is
+//! numeric constant rules one pp-number rule, an identifier is IDENTIFIER whatever its symbol's kind
+//! and the extended identifier rule's refused character PP_OTHER, and a catch-all rule comes last
+//! before the start conditions; every other line as it is
+[arch(at="../../ARCHITECTURE_TOKENS.md#pp-tokens")]
 def pp_rule_lines(rules : string) : string {
-    let lines <- split(rules, "\n")
+    let words = replace(replace(rules, "        return false if (!c_ident_cut(lx))\n        lx |> emit(c_word_kind(lx))",
+                                "        lx |> emit(c_pp_ident_cut(lx))"), "c_word_kind(lx)", "c_pp_word(lx)")
+    let lines <- split(words, "\n")
     let n = length(lines)
+    let number_rule = replace(PP_NUMBER_RULE, "IDENT_CONTINUE", ident_continue(lines))
     var number_done = false
+    var other_done = false
     return build_string() $(var w) {
         var i = 0
         while (i < n) {
@@ -107,10 +138,14 @@ def pp_rule_lines(rules : string) : string {
                     last++
                 }
             }
+            if (!other_done && (starts_with(lines[i], "    condition(") || (i + 1 == n && empty(lines[i])))) {
+                w |> write(PP_OTHER_RULE)
+                other_done = true
+            }
             if (lines[i] == "    rule(\"#[^\\\\n]*\") \{") {
                 w |> write(PP_HASH_RULES)
             } elif (last > i && is_number_rule(lines, i, last)) {
-                w |> write(number_done ? "" : PP_NUMBER_RULE)
+                w |> write(number_done ? "" : number_rule)
                 number_done = true
             } else {
                 for (k in range(i, last + 1)) {

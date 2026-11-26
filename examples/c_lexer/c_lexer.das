@@ -4,7 +4,7 @@ options indenting = 4
 module c_lexer shared public
 
 // A C11 lexer on dasFlex: the rules of the classic c11.l (Degener/Lee) as [flex] rules. Token kinds
-// above 127 are the grammar's named terminals in the yacc order, then the two kinds only the
+// above 127 are the grammar's named terminals in the yacc order, then the three kinds only the
 // preprocessing-token lexer `c_lexer_pp` emits; a single-character punctuator is its own byte, as
 // in yacc. Keywords are one identifier rule plus a
 // symbol lookup in the action: `c_open` interns the keywords with
@@ -93,6 +93,7 @@ enum CTok {
     THREAD_LOCAL = 200
     PP_NUMBER = 201
     HASHHASH = 202
+    PP_OTHER = 203
 }
 
 let KEYWORDS <- {
@@ -262,17 +263,41 @@ def c_ident_prefix(bytes : auto; start, end : int) : int {
 def c_ident_cut(var lx : FlexLexer) : bool {
     let n = c_ident_prefix(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
     return true if (n == lx.tok.len)
-    lx.pos = lx.tok.start + n
-    lx.line = lx.tok.line
-    lx.col = lx.tok.col + n
-    if (n > 0) {
-        lx.tok.len = n
-        lx.tok.text = ""
-        return true
-    }
+    c_cut(lx, n)
+    return true if (n > 0)
     lx.failed = true
     lx.err = flex_error_text(lx)
     return false
+}
+
+//! the token shortened to its first `n` bytes, the cursor right after them
+def private c_cut(var lx : FlexLexer; n : int) {
+    lx.pos = lx.tok.start + n
+    lx.line = lx.tok.line
+    lx.col = lx.tok.col + n
+    lx.tok.len = n
+    lx.tok.text = ""
+}
+
+//! the pp lexer's identifier rule: the token's symbol interned, its kind IDENTIFIER whatever kind
+//! the symbol carries - a preprocessing token is an identifier, never a keyword or a typedef name
+def c_pp_word(var lx : FlexLexer) : int {
+    intern(lx)
+    return int(CTok.IDENTIFIER)
+}
+
+//! the pp lexer's extended identifier rule: the identifier that opens the token, or, when none does,
+//! its first character alone - a byte for the `\` of a UCN - as PP_OTHER (C11 6.4p3)
+[arch(at="../../ARCHITECTURE_TOKENS.md#pp-tokens")]
+def c_pp_ident_cut(var lx : FlexLexer) : int {
+    let n = c_ident_prefix(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
+    if (n > 0) {
+        c_cut(lx, n)
+        return c_pp_word(lx)
+    }
+    let b = int(lx.bytes[lx.tok.start])
+    c_cut(lx, b == '\\' ? 1 : utf8_at(lx.bytes, lx.tok.start).y)
+    return int(CTok.PP_OTHER)
 }
 
 //! `flex_open` for C source: the keywords interned (`c_symbols`), a

@@ -502,6 +502,53 @@ def test_pp_number(t : T?) {
     t |> equal(pp_tokens("1..2"), ["PP_NUMBER:1..2/b"])
     t |> equal(pp_tokens("..5"), [".:./b", "PP_NUMBER:.5/"])
     t |> equal(pp_tokens("1+5 x.5"), ["PP_NUMBER:1/b", "+:+/", "PP_NUMBER:5/", "IDENTIFIER:x/s", "PP_NUMBER:.5/"])
+    t |> equal(pp_tokens("0x1P+3 1_000"), ["PP_NUMBER:0x1P+3/b", "PP_NUMBER:1_000/s"])
+}
+
+[test(description = "a pp-number continues with the identifier characters past ASCII and UCNs, as clang lexes them, and not with $")]
+def test_pp_number_identifier_nondigits(t : T?) {
+    t |> equal(pp_tokens("1\\u00e9 1\xC3\xA9x 2\\U0001F600 1$"),
+               ["PP_NUMBER:1\\u00e9/b", "PP_NUMBER:1\xC3\xA9x/s", "PP_NUMBER:2\\U0001F600/s", "PP_NUMBER:1/s",
+                "IDENTIFIER:$/"])
+}
+
+[test(description = "the C pp lexer takes any other character as a PP_OTHER token of its own (C11 6.4p3): @, a backquote, a lone backslash, a quote no literal closes, a character Annex D refuses, a byte no UTF-8 character starts with")]
+def test_pp_other(t : T?) {
+    t |> equal(pp_tokens("@ ` \\ x"), ["PP_OTHER:@/b", "PP_OTHER:`/s", "PP_OTHER:\\/s", "IDENTIFIER:x/s"])
+    t |> equal(pp_tokens("a\xC3\x97b \"c"), ["IDENTIFIER:a/b", "PP_OTHER:\xC3\x97/", "IDENTIFIER:b/", "PP_OTHER:\"/s",
+                                              "IDENTIFIER:c/"])
+    t |> equal(pp_tokens("x \x80;"), ["IDENTIFIER:x/b", "PP_OTHER:\x80/s", ";:;/"])
+    t |> equal(pp_tokens("\\u00e9x x\\u00D7y"), ["IDENTIFIER:\\u00e9x/b", "IDENTIFIER:x/s", "PP_OTHER:\\/",
+                                              "IDENTIFIER:u00D7y/"])
+}
+
+[test(description = "the C pp lexer lexes every identifier as IDENTIFIER, a keyword and a name the symbols carry as a typedef name too, and keeps its symbol")]
+def test_pp_identifiers_only(t : T?) {
+    var lx : FlexLexer
+    c_typedef(lx.syms, "T")
+    c_open(lx, "if int T")
+    var toks : array<string>
+    while (c_next_pp(lx)) {
+        toks |> push("{c_token_name(lx.tok.kind)}:{lx.tok.sym >= 0 ? symbol_text(lx.syms, lx.tok.sym) : "-"}")
+    }
+    t |> equal(toks, ["IDENTIFIER:if", "IDENTIFIER:int", "IDENTIFIER:T"])
+}
+
+[test(description = "the C pp lexer lexes every input of the Unicode case table to its end, the token-pasting and stringizing inputs among them")]
+def test_pp_lexes_every_case(t : T?) {
+    for (c in read_cases()) {
+        var lx : FlexLexer
+        c_open(lx, fread(path_join(cases_dir(), "{c.name}.c")))
+        while (c_next_pp(lx)) {
+        }
+        t |> success(!lx.failed && lx.pos == lx.len, "{c.name}: {lx.err}")
+    }
+}
+
+[test(description = "the three kinds only c_lexer_pp emits follow the yacc terminals: PP_NUMBER, HASHHASH and PP_OTHER right after THREAD_LOCAL")]
+def test_pp_kinds_follow_yacc(t : T?) {
+    let last = int(CTok.THREAD_LOCAL)
+    t |> equal([int(CTok.PP_NUMBER), int(CTok.HASHHASH), int(CTok.PP_OTHER)], [last + 1, last + 2, last + 3])
 }
 
 [test(description = "the C pp lexer takes # and ## as punctuators, # at the start of a line at_bol and # inside one not")]
@@ -518,6 +565,6 @@ def test_compare_pp_unfiltered(t : T?) {
     var rules : array<ReRule>
     var inscope res <- lex_unfiltered("pp", "#if X\n1.e+2 __attribute__((x))", typedefs, rules)
     t |> equal([for (tk in res.toks); "{c_token_name(tk.kind)}:{tk.text}/{tk.has_space ? "s" : ""}{tk.at_bol ? "b" : ""}"],
-               ["#:#/b", "IF:if/", "IDENTIFIER:X/s", "PP_NUMBER:1.e+2/sb", "IDENTIFIER:__attribute__/s", "(:(/", "(:(/",
+               ["#:#/b", "IDENTIFIER:if/", "IDENTIFIER:X/s", "PP_NUMBER:1.e+2/sb", "IDENTIFIER:__attribute__/s", "(:(/", "(:(/",
                 "IDENTIFIER:x/", "):)/", "):)/"])
 }

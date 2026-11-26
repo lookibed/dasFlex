@@ -25,3 +25,22 @@ writes per token, nothing per byte, and every scanner shape - each `mode`, `matc
 The definitions are the lexer's, not the C standard's or chibicc's: a newline inside a block comment
 sets `at_bol`, where translation phase 3 replaces the comment with one space and chibicc leaves the
 flag unset, and `has_space` stays set across a newline, which chibicc clears.
+
+## Preprocessing tokens {#pp-tokens}
+
+`examples/c_lexer/c_lexer_pp.das` is the rule list of `c_next` rewritten by `gen_variants.das` into
+the pp-token grammar of C11 6.4, so a preprocessor gets its tokens from the same rules the compiler
+phase lexes with. The skipped `#` line becomes the `#` and `##` punctuators. The numeric constant
+rules become one pp-number rule (6.4.8): after a digit, or a dot and a digit, it continues with
+digits, dots, exponent signs after `e`, `E`, `p` and `P`, and the identifier-nondigits - ASCII
+letters and `_`, UCNs, and the code points the identifier rule continues with, a set the generator
+copies from that rule, so `1é` is one pp-number as clang lexes it, and `1$` is `1` then `$`.
+An identifier is IDENTIFIER and keeps its symbol, never a keyword or a typedef name: the pp-token
+grammar has only `identifier`, and the kinds belong to the phase after it, so the lexer reads no
+kind its symbols carry. A last rule takes any other character as a PP_OTHER token of its own
+(6.4p3): one code point, or one byte that starts none; a character Annex D refuses where the
+extended identifier rule meets it is one too, so the lexer reaches the end of any input.
+
+The input is past translation phase 2: a backslash-newline is not removed by a rule, since a rule
+that skipped it would set `has_space`, and one that matched across it would need it in every
+pattern. Neither lexer takes digraphs (`<:`, `%:`, `%:%:`): the classic c11.l rules have none.
