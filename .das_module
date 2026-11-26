@@ -3,7 +3,7 @@ require daslib/fio
 
 [export]
 def initialize(project_path : string) {
-    for (path in ["flex_regex", "flex_dfa", "flex", "flex_macro", "flex_reader"]) {
+    for (path in ["flex_regex", "flex_dfa", "flex_tier", "flex_symbols", "flex", "flex_macro", "flex_reader"]) {
         register_native_path("flex", "{path}", "{project_path}/flex/{path}.das")
     }
 }

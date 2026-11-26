@@ -1,7 +1,7 @@
 # dasFlex Code Review Checklist
 
-**Read `REVIEW_COMMON.md` (package root) first - its contract binds this checklist.** Architecture doc:
-`ARCHITECTURE.md`.
+**Read `REVIEW_COMMON.md` (package root) first - its contract binds this checklist.** Architecture docs:
+`ARCHITECTURE.md` and its companion `ARCHITECTURE_SYMBOLS.md`, the symbol interner.
 
 **A diff under `flex/` that adds a `require` of a module other than one under `flex/`, one under
 `daslib/`, or a builtin module the daslang executable registers itself (such as `strings` or `math`)
@@ -42,6 +42,19 @@ match - a pass for line and column - is a defect** - they count newlines on the 
 
 **A diff that allocates a string in the generated scanner loop before a rule body asks for one
 (`text`) is a defect** - the match is a span; the string is on request.
+
+**A diff that makes `intern` build a string or allocate on a hit, that lets `flex_open` replace the
+input while the lexer's symbols still point into it, or that leaves in `tok.sym` a symbol no rule
+interned for the token, is a defect** - a symbol is found by its bytes and its string is built on
+request (`ARCHITECTURE_SYMBOLS.md#symbols`).
+
+**A diff that lets `intern(lx)` return or panic with a byte of the lexer's input changed, or that
+drops the zero byte `flex_open` keeps past the input, is a defect** - the native shape ends the
+token with a zero in place for its lookup (`ARCHITECTURE_SYMBOLS.md#symbols`).
+
+**A diff that makes the probing and the native shape of `FlexSymbols` give different ids or texts
+for one sequence of names is a defect** - `tests/flex_symbols_tests.das` runs the interner's tests
+in both shapes.
 
 **A diff that changes `examples/c_lexer/c_lexer.das` so that its token stream over a preprocessed C
 file differs from the hand-written lexer in `c_lex_compare.das` (`--mode probe`) is a defect** - run

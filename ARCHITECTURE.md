@@ -4,7 +4,7 @@ This document follows `ARCHITECTURE_COMMON.md` (a copy sits at this package's ro
 pure daslang lexer generator: rules written as regular expressions inside a `[flex]` function are
 compiled at compile time into one deterministic automaton per rule set, and the function becomes the
 scanner that drives it. It depends on `daslib/regex` for parsing regex text and on nothing under
-`modules/`.
+`modules/`. The symbol interner's mechanism is in the companion `ARCHITECTURE_SYMBOLS.md`.
 
 ## File charters
 
@@ -15,9 +15,14 @@ scanner that drives it. It depends on `daslib/regex` for parsing regex text and 
 - `flex/flex_dfa.das` - the NFA to tables (`FlexTables`, `build_tables`, `flex_tables`): byte
   equivalence classes, subset construction, the rule an accepting state carries. Knows nothing of
   source code or macros.
+- `flex/flex_symbols.das` - the symbol interner (`FlexSymbols`, `intern`, `intern_name`,
+  `intern_terminated`, `symbol_kind`, `symbol_text`, `flex_symbols_detach`) in its two shapes:
+  names as integers by their bytes. Knows nothing of the lexer.
+- `flex/flex_tier.das` - `flex_jit_tier()`, the tier of the program being compiled as a constant,
+  for code outside a macro that takes a shape per tier. Nothing else.
 - `flex/flex.das` - the run-time scanner state (`FlexLexer`, `FlexToken`), the actions a rule body
-  calls (`emit`, `begin`, `text`, `text_is`), the capture-group re-match behind `group` and
-  `group_span` (`flex_group`, `flex_group_span`, `flex_group_regex`), the error text
+  calls (`emit`, `begin`, `text`, `text_is`, `intern`), the capture-group re-match behind `group`
+  and `group_span` (`flex_group`, `flex_group_span`, `flex_group_regex`), the error text
   (`flex_error_text`), the UTF-8 lead bytes both the error text and `.` read (`UTF8_LEADS`), and
   the matcher and position tracking of the `matcher="call"` shape (`flex_match_table`,
   `flex_consume`). No regex, no AST.
@@ -155,6 +160,8 @@ annotation runs: tables for the interpreter, where every simulation node costs a
 per byte, straight-line code for the JIT and the exe, where LLVM folds the per-state tests into `switch` instructions.
 `mode = "table"` or `mode = "goto"` on the annotation overrides it. The module cache keeps a record per tier, so a
 module compiled for the interpreter is compiled again, not reused, when the same program runs under the JIT.
+The symbol interner follows the tier by the same reasoning, through `flex_jit_tier()`: a native table in the
+interpreter, the probing table in daslang code under the JIT (`ARCHITECTURE_SYMBOLS.md#symbols`).
 
 ## Rule bodies run in place {#rule-bodies}
 
@@ -224,13 +231,6 @@ function is called by name (`while (name(lx))`), with no function pointer betwee
 the scanner. The text ends at the first `%%`, as every reader's does, so the formatter and the
 other tools that skip reader text skip all of it; the definitions end at the line `%rules`
 rather than at flex's inner `%%`.
-
-## The symbol table
-
-`FlexLexer.symbols : table<string; int>` is the one channel from a parser back into the lexer: a
-C parser puts `typedef` names there and the identifier rule reads it to decide between
-`IDENTIFIER` and `TYPEDEF_NAME`. It is a field of the lexer, not a global, so two lexers never share
-it by accident.
 
 ## Unicode in the C lexer {#c-unicode}
 

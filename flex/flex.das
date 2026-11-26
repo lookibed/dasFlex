@@ -6,6 +6,8 @@ module flex shared public
 
 require daslib/strings_boost
 require daslib/regex
+require flex/flex_symbols public
+require flex/flex_tier
 
 // The scanner the generated code drives: input as raw bytes, a cursor, the token the last rule
 // emitted, and line/column kept by counting newlines in each consumed span. Matching and taking a
@@ -20,12 +22,13 @@ struct FlexToken {
     line : int
     col : int
     text : string       //!< the matched text once `text()` built it; "" until then
+    sym : int           //!< the symbol `intern(lx)` found; -1 if none, from `flex_open` on
 }
 
 //! The scanner state.
 struct FlexLexer {
     bytes : array<uint8>        //!< the input, one copy made at `flex_open`
-    data : uint8 const?         //!< `bytes` as a raw pointer for the inner loop
+    data : uint8?               //!< `bytes` as a raw pointer for the inner loop; a zero past the input
     len : int
     pos : int
     line : int
@@ -35,7 +38,7 @@ struct FlexLexer {
     emitted : bool              //!< the last rule called `emit`
     failed : bool               //!< a byte no rule accepts was met
     file : string
-    symbols : table<string; int> //!< a parser's channel back into the lexer (C `typedef` names)
+    syms : FlexSymbols          //!< names by their bytes, a kind each
     err : string
     groups : array<range>       //!< the capture groups of one token, input offsets; -1 where absent
     groups_start : int          //!< the `tok.start` `groups` belong to
@@ -44,9 +47,12 @@ struct FlexLexer {
 
 //! Open `src` for scanning: the bytes are copied once, the string may go.
 def flex_open(var lx : FlexLexer; src : string; file : string = "") {
+    flex_symbols_detach(lx.syms)
+    lx.tok.sym = -1
     lx.bytes <- to_bytes(src)
     lx.len = length(lx.bytes)
-    lx.data = lx.len > 0 ? unsafe(addr(lx.bytes[0])) : null
+    lx.bytes |> push(0u8)
+    lx.data = unsafe(addr(lx.bytes[0]))
     lx.pos = 0
     lx.line = 1
     lx.col = 1
@@ -124,6 +130,39 @@ def flex_group_span(var lx : FlexLexer; var re : Regex; index : int) : range {
     return span.x < 0 ? range(0, 0) : span
 }
 
+//! The symbol of the matched text, by its bytes and without a string;
+//! also kept as `tok.sym`. A native interner reads the text in place:
+//! the byte after the token is a zero for the table lookup alone.
+[arch(at="../ARCHITECTURE_SYMBOLS.md#symbols"), inline]
+def intern(var lx : FlexLexer) : int {
+    static_if (flex_jit_tier()) {
+        if (lx.syms.shape != FlexSymbolsShape.native) {
+            lx.tok.sym = intern(lx.syms, lx.data, lx.tok.start, lx.tok.len)
+            return lx.tok.sym
+        }
+    } else {
+        if (lx.syms.shape == FlexSymbolsShape.probing) {
+            lx.tok.sym = intern(lx.syms, lx.data, lx.tok.start, lx.tok.len)
+            return lx.tok.sym
+        }
+    }
+    unsafe {
+        let p = lx.data + lx.tok.start
+        var after = lx.data + (lx.tok.start + lx.tok.len)
+        let saved = *after
+        *after = 0u8
+        var id = lx.syms.ids?[reinterpret<string>(p)] ?? -1
+        *after = saved
+        if (id < 0) {
+            id = intern_new(lx.syms, p, lx.tok.len)
+        } elif (lx.syms.entries[id].plain_len != lx.tok.len) {
+            id = intern_unsettled(lx.syms, p, lx.tok.len, id)
+        }
+        lx.tok.sym = id
+        return id
+    }
+}
+
 //! A length-bounded comparison of the matched text with `s`, no allocation.
 def text_is(lx : FlexLexer; s : string) : bool {
     return false if (length(s) != lx.tok.len)
@@ -186,6 +225,7 @@ def flex_consume(var lx : FlexLexer; start, len : int) {
     lx.tok.start = start
     lx.tok.len = len
     lx.tok.text = ""
+    lx.tok.sym = -1
     lx.tok.line = lx.line
     lx.tok.col = lx.col
     let stop = start + len

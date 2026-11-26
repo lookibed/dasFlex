@@ -8,6 +8,10 @@ options indenting = 4
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
 // `--count` (with `--time N` and `--mode flex` or `flex-inline`) times the scanner alone: the lexer is opened outside the timer and
 // the loop counts tokens, with no token array and no `text()` per token.
+// A HEAP line follows with the heap and string-heap allocations of that
+// loop. The token arrays of the dasFlex and probe modes keep an
+// identifier as its symbol, with no string; the regex mode builds the
+// word and looks it up by string, a check independent of the interner.
 //
 // `flex` (also `flex-inline`) is the default shape, the inline matcher with goto dispatch; the
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
@@ -28,17 +32,45 @@ require daslib/strings_boost
 require daslib/utf8_utils
 require strings
 
+//! one token: an identifier, keyword or typedef name is its symbol
+//! `sym` and its `text` stays "" until `resolve_text`; any other
+//! token is its text and `sym` -1
 struct Tok {
     kind : int
     text : string
     line : int
+    sym : int
 }
 
-//! a lexer's tokens over a text, then the error text of the byte it stopped at: "" when it took the
-//! whole text
+//! the tokens of one file, and the symbols their `sym` fields name;
+//! `src` holds the bytes the symbols' spans point into when the lexer
+//! made a copy of the text; `err` is the error text of the byte the
+//! lexer stopped at, "" when it took the whole text
 struct Lexed {
     toks : array<Tok>
+    syms : FlexSymbols
+    src : array<uint8>
     err : string
+}
+
+//! the text of every identifier token from its symbol - one string
+//! per name - for the filter and the dump
+def resolve_text(var lexed : Lexed) {
+    for (t in lexed.toks) {
+        if (t.sym >= 0) {
+            t.text = symbol_text(lexed.syms, t.sym)
+        }
+    }
+}
+
+//! a symbol table holding the keywords and `typedefs`
+def c_symbols_with(typedefs : table<string; int>) : FlexSymbols {
+    var syms : FlexSymbols
+    c_symbols(syms)
+    for (name in keys(typedefs)) {
+        c_typedef(syms, name)
+    }
+    return <- syms
 }
 
 def is_ident_start(c : int) : bool => is_alpha(c) || c == '_' || c == '$'
@@ -119,9 +151,11 @@ def probe_error(text : string; at, line, col : int) : string {
 
 let PUNCT1 = ";\{\},:=()[].&!~-+*/%<>^|?"
 
-//! the probe's hand-written lexer: raw tokens, no filter (keywords by table, typedef names by `typedefs`)
+//! the probe's hand-written lexer: raw tokens, no filter; keywords
+//! and the names in `typedefs` by their symbols, the spans pointing
+//! into `text`
 def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint:STYLE038 - the probe's lexer kept whole, as the reference
-    var res : Lexed
+    var res = Lexed(syms <- c_symbols_with(typedefs))
     var line = 1
     var line_start = 0
     peek_data(text) $(d) {  // nolint:STYLE037 - see the function
@@ -179,7 +213,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint
                     i = start + prefix + len
                     res.toks |> emplace(
                                    Tok(kind = int(quote == '"' ? CTok.STRING_LITERAL : CTok.I_CONSTANT),
-                                       text = slice(d, start, i), line = line))
+                                       text = slice(d, start, i), line = line, sym = -1))
                     continue
                 }
                 if (prefix == 0) {
@@ -204,15 +238,8 @@ def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint
                     res.err = probe_error(text, start, line, start - line_start + 1)
                     break
                 }
-                let word = slice(d, start, i)
-                var kind = int(CTok.IDENTIFIER)
-                KEYWORDS |> get(word) $(k) {
-                    kind = int(k)
-                }
-                if (kind == int(CTok.IDENTIFIER) && typedefs |> key_exists(word)) {
-                    kind = int(CTok.TYPEDEF_NAME)
-                }
-                res.toks |> emplace(Tok(kind = kind, text = word, line = line))
+                let sym = intern(res.syms, unsafe(addr<uint8 const?>(d[0])), start, i - start)
+                res.toks |> emplace(Tok(kind = symbol_kind(res.syms, sym), line = line, sym = sym))
                 continue
             }
             if (is_number(c) || (c == '.' && i + 1 < n && is_number(int(d[i + 1])))) {
@@ -237,7 +264,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint
                 let word = slice(d, start, i)
                 res.toks |> emplace(
                                Tok(kind = int(is_float ? CTok.F_CONSTANT : CTok.I_CONSTANT),
-                                   text = word, line = line))
+                                   text = word, line = line, sym = -1))
                 continue
             }
             if (i + 2 < n) {
@@ -247,7 +274,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint
                     p3 = int(v)
                 }
                 if (p3 >= 0) {
-                    res.toks |> emplace(Tok(kind = p3, text = s3, line = line))
+                    res.toks |> emplace(Tok(kind = p3, text = s3, line = line, sym = -1))
                     i += 3
                     continue
                 }
@@ -259,7 +286,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint
                     p2 = int(v)
                 }
                 if (p2 >= 0) {
-                    res.toks |> emplace(Tok(kind = p2, text = s2, line = line))
+                    res.toks |> emplace(Tok(kind = p2, text = s2, line = line, sym = -1))
                     i += 2
                     continue
                 }
@@ -268,7 +295,7 @@ def lex_probe(text : string; typedefs : table<string; int>) : Lexed {  // nolint
                 res.err = probe_error(text, i, line, i - line_start + 1)
                 break
             }
-            res.toks |> emplace(Tok(kind = c, text = slice(d, i, i + 1), line = line))
+            res.toks |> emplace(Tok(kind = c, text = slice(d, i, i + 1), line = line, sym = -1))
             i++
         }
     }
@@ -284,19 +311,22 @@ let PUNCT2 <- {
     "!=" => CTok.NE_OP
 }
 
-//! every token `scan` takes from `lx`
+//! every token `scan` takes from `lx`: a token a rule interned as its
+//! symbol, any other as its text
 def flex_tokens(var lx : FlexLexer; scan : block<(var lx : FlexLexer) : bool>) : array<Tok> {
     var out : array<Tok>
     while (invoke(scan, lx)) {
-        out |> emplace(Tok(kind = lx.tok.kind, text = text(lx), line = lx.tok.line))
+        out |> emplace(Tok(kind = lx.tok.kind, text = lx.tok.sym >= 0 ? "" : text(lx), line = lx.tok.line,
+                           sym = lx.tok.sym))
     }
     return <- out
 }
 
-//! the dasFlex lexer in one of its generated shapes: raw tokens
+//! the dasFlex lexer in one of its generated shapes: raw tokens, and
+//! the lexer's symbols and bytes
 def lex_flex(text : string; typedefs : table<string; int>; shape : string) : Lexed {
     var lx : FlexLexer
-    lx.symbols := typedefs
+    lx.syms <- c_symbols_with(typedefs)
     c_open(lx, text)
     var res : Lexed
     if (shape == "flex" || shape == "flex-inline") {
@@ -306,6 +336,8 @@ def lex_flex(text : string; typedefs : table<string; int>; shape : string) : Lex
         res.toks <- flex_tokens(lx) $(var l : FlexLexer) => invoke(scan, l)
     }
     res.err = lx.failed ? lx.err : ""
+    res.syms <- lx.syms
+    res.src <- lx.bytes
     return <- res
 }
 
@@ -444,7 +476,7 @@ def lex_regex(text : string; typedefs : table<string; int>;
             } elif (kind == -3) {
                 k = int(d[start])
             }
-            res.toks |> emplace(Tok(kind = k, text = slice(d, start, best_end), line = line))
+            res.toks |> emplace(Tok(kind = k, text = slice(d, start, best_end), line = line, sym = -1))
         }
     }
     return <- res
@@ -521,7 +553,7 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
                 in_typedef = false
             }
         }
-        out |> emplace(Tok(kind = t.kind, text = t.text, line = t.line))
+        out |> emplace(Tok(kind = t.kind, text = t.text, line = t.line, sym = -1))
         i++
     }
     return <- out
@@ -529,33 +561,75 @@ def filter_tokens(raw : array<Tok>; var typedefs : table<string; int>) : array<T
 
 //! the tokens of the lexer `mode` names; its error text, when it stopped, printed
 def lex_mode(mode : string; text : string; typedefs : table<string; int>;
-             var rules : array<ReRule>) : array<Tok> {
+             var rules : array<ReRule>) : Lexed {
     var res <- (mode == "probe" ? lex_probe(text, typedefs)
         : mode == "regex" ? lex_regex(text, typedefs, rules) : lex_flex(text, typedefs, mode))
     if (!empty(res.err)) {
         print("{res.err}\n")
     }
-    return <- res.toks
+    return <- res
 }
 
-//! the default shape's scanner alone, `passes` times: the lexer is opened outside the timer, the loop counts tokens
-def time_count(path : string; text : string; typedefs : table<string; int>; passes : int) {
-    var inscope times : array<double>
-    times |> reserve(passes)
-    var ntok = 0
+//! the tokens of one file after the shared filter, and how many
+//! typedef names the filter knew at its end
+struct Filtered {
+    toks : array<Tok>
+    typedef_count : int
+}
+
+//! `text` lexed by `mode` twice and filtered: the first pass learns
+//! the typedef names the second needs (the C grammar's lexer hack), so
+//! every mode sees the same table; `typedefs` gains the first pass's
+//! names
+def lex_filtered(mode : string; text : string; var typedefs : table<string; int>;
+                 var rules : array<ReRule>) : Filtered {
+    var inscope first_raw <- lex_mode(mode, text, typedefs, rules)
+    resolve_text(first_raw)
+    var inscope first_toks <- filter_tokens(first_raw.toks, typedefs)
+    var inscope raw <- lex_mode(mode, text, typedefs, rules)
+    resolve_text(raw)
+    var inscope seed := typedefs
+    var res = Filtered(toks <- filter_tokens(raw.toks, seed))
+    res.typedef_count = length(seed)
+    return <- res
+}
+
+//! a count-only scan of the default shape: the tokens and the
+//! symbols the lexer ended with, the heap and string-heap allocations
+//! of the last pass's loop, and each pass's milliseconds, sorted
+struct CountRun {
+    tokens : int
+    symbols : int
+    heap_allocs : uint64
+    string_allocs : uint64
+    times : array<double>
+}
+
+//! the default shape's scanner alone, `passes` times: the lexer is
+//! opened outside the timer, the loop counts tokens; the allocations
+//! are counted outside the timer
+def time_count(text : string; typedefs : table<string; int>; passes : int) : CountRun {
+    var run : CountRun
+    run.times |> reserve(passes)
     for (_k in range(passes)) {
         var lx : FlexLexer
-        lx.symbols := typedefs
-        flex_open(lx, text)
-        ntok = 0
+        lx.syms <- c_symbols_with(typedefs)
+        c_open(lx, text)
+        var ntok = 0
+        let heap0 = heap_allocation_count()
+        let strings0 = string_heap_allocation_count()
         let t0 = ref_time_ticks()
         while (c_next(lx)) {
             ntok++
         }
-        times |> push(double(get_time_usec(t0)) / 1000.0lf)
+        run.times |> push(double(get_time_usec(t0)) / 1000.0lf)
+        run.heap_allocs = heap_allocation_count() - heap0
+        run.string_allocs = string_heap_allocation_count() - strings0
+        run.tokens = ntok
+        run.symbols = symbol_count(lx.syms)
     }
-    sort(times)
-    print("TIME flex+count {path} median_ms={times[length(times) / 2]} min={times[0]} max={times[length(times) - 1]} bytes={length(text)} tokens={ntok}\n")
+    sort(run.times)
+    return <- run
 }
 
 [CommandLineArgs]
@@ -589,24 +663,20 @@ def main() : int {
             print("{path}: empty or unreadable\n")
             continue
         }
-        // two lexing passes: the first learns the typedef names the second needs (the C grammar's
-        // lexer hack), so every mode sees the same table
         var inscope typedefs : table<string; int>
         typedefs["__builtin_va_list"] = 1
-        var inscope first_raw <- lex_mode(args.mode, text, typedefs, rules)
-        var inscope first_toks <- filter_tokens(first_raw, typedefs)
-        var inscope raw <- lex_mode(args.mode, text, typedefs, rules)
-        var inscope seed := typedefs
-        var inscope toks <- filter_tokens(raw, seed)
+        var inscope filtered <- lex_filtered(args.mode, text, typedefs, rules)
         if (args.dump) {
-            for (t in toks) {
+            for (t in filtered.toks) {
                 print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\n")
             }
         } else {
-            print("{path}: {args.mode}: {length(toks)} tokens, {length(seed)} typedefs\n")
+            print("{path}: {args.mode}: {length(filtered.toks)} tokens, {filtered.typedef_count} typedefs\n")
         }
         if (args.count) {
-            time_count(path, text, typedefs, args.time)
+            var inscope run <- time_count(text, typedefs, args.time)
+            print("TIME flex+count {path} median_ms={run.times[length(run.times) / 2]} min={run.times[0]} max={run.times[length(run.times) - 1]} bytes={length(text)} tokens={run.tokens}\n")
+            print("HEAP flex+count {path} tokens={run.tokens} symbols={run.symbols} heap_allocs={int64(run.heap_allocs)} string_allocs={int64(run.string_allocs)}\n")
         } elif (args.time > 0) {
             var inscope times : array<double>
             times |> reserve(args.time)
