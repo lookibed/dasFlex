@@ -117,8 +117,9 @@ lookup. Against `fast` the count-only JIT row takes 2.49-2.74x less time, the to
 1.71-1.80x less. The table was taken with the C lexer's ASCII rules; what its Unicode rules cost
 is the ledger's "Unicode in the C lexer". The timed C lexer (`c_next`) skips a `#` line, where chibicc
 makes `#` and `##` tokens (`c_lexer_pp.das` makes them too), and the table predates the
-`has_space` / `at_bol` flags every token now carries. Method and the step-by-step history:
-`PERF_LEDGER.md`.
+`has_space` / `at_bol` flags every token now carries: they take the count-only scan 7-9% longer in
+the interpreter and 3-7% under the JIT, four statements per token or skipped span and nothing per
+byte (ledger: "Preprocessing tokens"). Method and the step-by-step history: `PERF_LEDGER.md`.
 
 The table predates identifiers as symbols: the identifier rule now interns the token's bytes and
 emits its symbol's kind, so neither the scan nor the token array builds a string per identifier

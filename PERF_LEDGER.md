@@ -234,6 +234,39 @@ multiplication of the hash they save, A2's more than A1's. The native table lose
 name byte by byte (27 ns per hit against 12 for the probing code, indicative), and a miss pays the
 copy and a second hash.
 
+## Preprocessing tokens
+
+What the token flags `has_space` and `at_bol` cost the scan: before = `main` (dfe2903), after =
+`pp-tokens` (c407752), the same driver in both. After, each pass of the scanner loop - a token or a
+skipped span - runs four statements more: before the rule body the two pending flags are copied into
+the token, after it they are reset on a token (`at_bol` from the column) or raised on a skip
+(`at_bol` from the line); nothing runs per byte (`ARCHITECTURE_TOKENS.md#pp-flags`). The token array
+of `c_lex_compare.das` gains the two flags in its `Tok`, the probe's too, which leaves them unset.
+One run, alone on a quiet machine (cpu busy 1%), daslang 0.6.6; each cell is the median of 3 rounds,
+the two trees in alternating order, every round one process per tree, tier, driver and file, each
+process the median of 9 passes; JIT is `-jit -jit-no-cache`. Ms; the round range stays within 5% of
+the cell except interp token array doom_p_mobj.i before (7%) and wasm3_m3_parse.i after (12%), JIT
+count only doom_am_map.i after (55%, one round at 0.865), JIT token array before (7-17%) and
+wasm3_m3_parse.i after (7%), and the JIT probe (5-7%).
+
+| driver | interp before | interp after | jit before | jit after |
+|---|---|---|---|---|
+| dasFlex, count only (`--mode flex --count`), doom_am_map.i | 9.872 | 10.734 (+9%) | 0.528 | 0.563 (+7%) |
+| dasFlex, count only, doom_p_mobj.i | 8.805 | 9.452 (+7%) | 0.459 | 0.471 (+3%) |
+| dasFlex, count only, wasm3_m3_parse.i | 9.833 | 10.700 (+9%) | 0.501 | 0.529 (+6%) |
+| dasFlex, token array (`--mode flex`), doom_am_map.i | 11.614 | 12.725 (+10%) | 0.772 | 0.846 (+10%) |
+| dasFlex, token array, doom_p_mobj.i | 10.448 | 10.871 (+4%) | 0.655 | 0.658 (0%) |
+| dasFlex, token array, wasm3_m3_parse.i | 12.007 | 12.600 (+5%) | 0.737 | 0.814 (+10%) |
+| hand-written lexer (`--mode probe`), doom_am_map.i | 9.680 | 9.795 (+1%) | 1.112 | 1.147 (+3%) |
+| hand-written lexer, doom_p_mobj.i | 7.975 | 8.149 (+2%) | 0.876 | 0.861 (-2%) |
+| hand-written lexer, wasm3_m3_parse.i | 9.067 | 9.418 (+4%) | 1.047 | 1.079 (+3%) |
+
+The flags are not free: the count-only scan takes 7-9% longer in the interpreter and 3-7% longer
+under the JIT, the after tree slower in every round on every file in both tiers, while the
+hand-written probe, whose scanner did not change, moves -2 to +4%. The interpreter pays per statement
+node, and the loop runs once per token and once per skipped span, so four statements show against a
+loop body this short; the token-array rows carry the same cost plus the two fields per `Tok`.
+
 ## What the JIT IR says (LLVM 22, `--jit-dump`)
 - the rule dispatch is already a `switch` in both shapes, so the dispatch step is an interpreter step only;
 - the matcher loop does 9 loads and 3 bounds checks per byte (`class_of`, `next`, `accept` each reload their
