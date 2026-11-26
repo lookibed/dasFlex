@@ -387,6 +387,17 @@ def test_typedef_before_open(t : T?) {
     t |> equal(kinds, [int(CTok.IDENTIFIER), int(CTok.TYPEDEF_NAME), int(CTok.WHILE)])
 }
 
+[test(description = "c_open on symbols that already hold a name c_symbols did not put there still lexes a keyword as its kind, and that name as IDENTIFIER")]
+def test_open_after_foreign_name(t : T?) {
+    var lx : FlexLexer
+    intern_name(lx.syms, "foo")
+    c_open(lx, "int foo")
+    t |> success(c_next(lx))
+    t |> equal(lx.tok.kind, int(CTok.INT))
+    t |> success(c_next(lx))
+    t |> equal(lx.tok.kind, int(CTok.IDENTIFIER))
+}
+
 //! the heap and string-heap allocations of one count-only scan of
 //! `src`, the lexer opened before
 def private scan_allocations(src : string) : tuple<heap : uint64; strings : uint64> {

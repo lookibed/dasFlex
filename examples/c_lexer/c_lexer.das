@@ -158,10 +158,16 @@ def c_word_kind_of(word : string; typedefs : table<string; int>) : int {
     return kind
 }
 
-//! the symbols every C source starts with, put in an empty interner:
-//! the keywords and their kinds, IDENTIFIER for a new name
+//! the symbols every C source starts with: the keywords and their
+//! kinds, IDENTIFIER for a new name and for a name interned before
+//! them; nothing when the keywords are in already
 def c_symbols(var syms : FlexSymbols) {
-    return if (symbol_count(syms) > 0)
+    return if (symbol_kind(syms, intern_name(syms, "int")) == int(CTok.INT))
+    for (id in range(symbol_count(syms))) {
+        if (symbol_kind(syms, id) == syms.fresh_kind) {
+            set_symbol_kind(syms, id, int(CTok.IDENTIFIER))
+        }
+    }
     syms.fresh_kind = int(CTok.IDENTIFIER)
     for (word, kind in keys(KEYWORDS), values(KEYWORDS)) {
         set_symbol_kind(syms, intern_name(syms, word), int(kind))
