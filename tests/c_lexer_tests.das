@@ -398,28 +398,15 @@ def test_open_after_foreign_name(t : T?) {
     t |> equal(lx.tok.kind, int(CTok.IDENTIFIER))
 }
 
-//! the heap and string-heap allocations of one count-only scan of
-//! `src`, the lexer opened before
-def private scan_allocations(src : string) : tuple<heap : uint64; strings : uint64> {
-    var lx : FlexLexer
-    c_open(lx, src)
-    let heap0 = heap_allocation_count()
-    let strings0 = string_heap_allocation_count()
-    var n = 0
-    while (c_next(lx)) {
-        n++
-    }
-    return (heap = heap_allocation_count() - heap0, strings = string_heap_allocation_count() - strings0)
-}
-
 [test(description = "a count-only scan builds no string, and its heap allocations follow the distinct names, not the tokens: twenty copies of a source allocate what one does")]
 def test_scan_allocates_per_name(t : T?) {
     let once = "static int count_of(const char *s, unsigned n) \{ return s[n] + 0x1f + 2.5e3f; \}\n"
-    let one = scan_allocations(once)
-    t |> equal(one.strings, 0ul)
-    let many = scan_allocations(repeat(once, 20))
-    t |> equal(many.strings, 0ul)
-    t |> equal(many.heap, one.heap)
+    var inscope none : table<string; int>
+    var inscope one <- time_count(once, none, 1)
+    t |> equal(one.string_allocs, 0ul)
+    var inscope many <- time_count(repeat(once, 20), none, 1)
+    t |> equal(many.string_allocs, 0ul)
+    t |> equal(many.heap_allocs, one.heap_allocs)
 }
 
 [test(description = "the token arrays of c_lex_compare carry an identifier as its symbol with no text until resolve_text, any other token as its text")]
@@ -436,4 +423,32 @@ def test_compare_tokens_by_symbol(t : T?) {
         t |> equal([for (tk in lexed.toks); tk.text], ["T", "x", "=", "1", ";"], mode)
         t |> equal(lexed.toks[0].kind, int(CTok.TYPEDEF_NAME), mode)
     }
+}
+
+[test(description = "the count-only scan opens the lexer as c_open does: a byte order mark at offset 0 is skipped, not a name, and the scan builds no string")]
+def test_count_run_skips_bom(t : T?) {
+    var inscope none : table<string; int>
+    var inscope run <- time_count("\xEF\xBB\xBFint x;", none, 1)
+    t |> equal(run.tokens, 3)
+    t |> equal(run.symbols, symbol_count(c_symbols_with(none)) + 1)
+    t |> equal(run.string_allocs, 0ul)
+    t |> equal(length(run.times), 1)
+}
+
+[test(description = "lex_filtered resolves the identifier texts before each filter pass, so the first pass learns a typedef the second lexes as TYPEDEF_NAME")]
+def test_filtered_learns_typedefs(t : T?) {
+    var inscope typedefs : table<string; int>
+    var rules : array<ReRule>
+    var inscope res <- lex_filtered("flex", "typedef int T; T y;", typedefs, rules)
+    t |> equal([for (tk in res.toks); tk.text], ["typedef", "int", "T", ";", "T", "y", ";"])
+    t |> equal(res.toks[4].kind, int(CTok.TYPEDEF_NAME))
+    t |> equal(res.typedef_count, 1)
+    t |> success(typedefs |> key_exists("T"))
+}
+
+[test(description = "the Lexed of a dasFlex mode owns the bytes its symbols' spans point into")]
+def test_lexed_owns_span_bytes(t : T?) {
+    var inscope typedefs : table<string; int>
+    var inscope lexed <- lex_flex("int x;", typedefs, "flex")
+    t |> success(!empty(lexed.src) && lexed.syms.src == unsafe(addr<uint8 const?>(lexed.src[0])))
 }

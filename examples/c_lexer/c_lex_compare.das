@@ -571,36 +571,66 @@ def lex_mode(mode : string; text : string; typedefs : table<string; int>;
     return <- res
 }
 
+//! the tokens of one file after the shared filter, and how many
+//! typedef names the filter knew at its end
+struct Filtered {
+    toks : array<Tok>
+    typedef_count : int
+}
+
+//! `text` lexed by `mode` twice and filtered: the first pass learns
+//! the typedef names the second needs (the C grammar's lexer hack), so
+//! every mode sees the same table; `typedefs` gains the first pass's
+//! names
+def lex_filtered(mode : string; text : string; var typedefs : table<string; int>;
+                 var rules : array<ReRule>) : Filtered {
+    var inscope first_raw <- lex_mode(mode, text, typedefs, rules)
+    resolve_text(first_raw)
+    var inscope first_toks <- filter_tokens(first_raw.toks, typedefs)
+    var inscope raw <- lex_mode(mode, text, typedefs, rules)
+    resolve_text(raw)
+    var inscope seed := typedefs
+    var res = Filtered(toks <- filter_tokens(raw.toks, seed))
+    res.typedef_count = length(seed)
+    return <- res
+}
+
+//! a count-only scan of the default shape: the tokens and the
+//! symbols the lexer ended with, the heap and string-heap allocations
+//! of the last pass's loop, and each pass's milliseconds, sorted
+struct CountRun {
+    tokens : int
+    symbols : int
+    heap_allocs : uint64
+    string_allocs : uint64
+    times : array<double>
+}
+
 //! the default shape's scanner alone, `passes` times: the lexer is
-//! opened outside the timer, the loop counts tokens; the heap and
-//! string-heap allocations of the last pass's loop, counted outside
-//! the timer, go with the times
-def time_count(path : string; text : string; typedefs : table<string; int>; passes : int) {
-    var inscope times : array<double>
-    times |> reserve(passes)
-    var ntok = 0
-    var heap_allocs = 0ul
-    var string_allocs = 0ul
-    var nsyms = 0
+//! opened outside the timer, the loop counts tokens; the allocations
+//! are counted outside the timer
+def time_count(text : string; typedefs : table<string; int>; passes : int) : CountRun {
+    var run : CountRun
+    run.times |> reserve(passes)
     for (_k in range(passes)) {
         var lx : FlexLexer
         lx.syms <- c_symbols_with(typedefs)
         c_open(lx, text)
-        ntok = 0
+        var ntok = 0
         let heap0 = heap_allocation_count()
         let strings0 = string_heap_allocation_count()
         let t0 = ref_time_ticks()
         while (c_next(lx)) {
             ntok++
         }
-        times |> push(double(get_time_usec(t0)) / 1000.0lf)
-        heap_allocs = heap_allocation_count() - heap0
-        string_allocs = string_heap_allocation_count() - strings0
-        nsyms = symbol_count(lx.syms)
+        run.times |> push(double(get_time_usec(t0)) / 1000.0lf)
+        run.heap_allocs = heap_allocation_count() - heap0
+        run.string_allocs = string_heap_allocation_count() - strings0
+        run.tokens = ntok
+        run.symbols = symbol_count(lx.syms)
     }
-    sort(times)
-    print("TIME flex+count {path} median_ms={times[length(times) / 2]} min={times[0]} max={times[length(times) - 1]} bytes={length(text)} tokens={ntok}\n")
-    print("HEAP flex+count {path} tokens={ntok} symbols={nsyms} heap_allocs={int64(heap_allocs)} string_allocs={int64(string_allocs)}\n")
+    sort(run.times)
+    return <- run
 }
 
 [CommandLineArgs]
@@ -634,26 +664,20 @@ def main() : int {
             print("{path}: empty or unreadable\n")
             continue
         }
-        // two lexing passes: the first learns the typedef names the second needs (the C grammar's
-        // lexer hack), so every mode sees the same table
         var inscope typedefs : table<string; int>
         typedefs["__builtin_va_list"] = 1
-        var inscope first_raw <- lex_mode(args.mode, text, typedefs, rules)
-        resolve_text(first_raw)
-        var inscope first_toks <- filter_tokens(first_raw.toks, typedefs)
-        var inscope raw <- lex_mode(args.mode, text, typedefs, rules)
-        resolve_text(raw)
-        var inscope seed := typedefs
-        var inscope toks <- filter_tokens(raw.toks, seed)
+        var inscope filtered <- lex_filtered(args.mode, text, typedefs, rules)
         if (args.dump) {
-            for (t in toks) {
+            for (t in filtered.toks) {
                 print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\n")
             }
         } else {
-            print("{path}: {args.mode}: {length(toks)} tokens, {length(seed)} typedefs\n")
+            print("{path}: {args.mode}: {length(filtered.toks)} tokens, {filtered.typedef_count} typedefs\n")
         }
         if (args.count) {
-            time_count(path, text, typedefs, args.time)
+            var inscope run <- time_count(text, typedefs, args.time)
+            print("TIME flex+count {path} median_ms={run.times[length(run.times) / 2]} min={run.times[0]} max={run.times[length(run.times) - 1]} bytes={length(text)} tokens={run.tokens}\n")
+            print("HEAP flex+count {path} tokens={run.tokens} symbols={run.symbols} heap_allocs={int64(run.heap_allocs)} string_allocs={int64(run.string_allocs)}\n")
         } elif (args.time > 0) {
             var inscope times : array<double>
             times |> reserve(args.time)
