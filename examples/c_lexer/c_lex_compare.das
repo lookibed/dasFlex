@@ -17,13 +17,16 @@ options indenting = 4
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
 // `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`). Every mode but `flex`
 // reaches its scanner through the function `c_scanner` returns, one indirect call per token more.
+// `pp` is the preprocessing-token lexer (`c_lexer_pp`): its stream is not filtered, and `--dump`
+// adds the `has_space` and `at_bol` flags of each token as two more columns.
 // The `regex` mode is ASCII + `$` + UCN escapes: `daslib/regex` has no code-point escape, so an
 // identifier holding a UTF-8 character past ASCII, or a byte order mark later than offset 0, stops it.
 //
-//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N [--count]) files...
+//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|pp|probe|regex (--dump | --time N [--count]) files...
 //   (`-- --help` lists the flags)
 
 require c_lexer
+require c_lexer_pp
 require c_lexer_variants
 require daslib/regex
 require daslib/fio
@@ -34,12 +37,14 @@ require strings
 
 //! one token: an identifier, keyword or typedef name is its symbol
 //! `sym` and its `text` stays "" until `resolve_text`; any other
-//! token is its text and `sym` -1
+//! token is its text and `sym` -1; the flags are the dasFlex lexer's
 struct Tok {
     kind : int
     text : string
     line : int
     sym : int
+    has_space : bool
+    at_bol : bool
 }
 
 //! the tokens of one file, and the symbols their `sym` fields name;
@@ -317,7 +322,7 @@ def flex_tokens(var lx : FlexLexer; scan : block<(var lx : FlexLexer) : bool>) :
     var out : array<Tok>
     while (invoke(scan, lx)) {
         out |> emplace(Tok(kind = lx.tok.kind, text = lx.tok.sym >= 0 ? "" : text(lx), line = lx.tok.line,
-                           sym = lx.tok.sym))
+                           sym = lx.tok.sym, has_space = lx.tok.has_space, at_bol = lx.tok.at_bol))
     }
     return <- out
 }
@@ -331,6 +336,8 @@ def lex_flex(text : string; typedefs : table<string; int>; shape : string) : Lex
     var res : Lexed
     if (shape == "flex" || shape == "flex-inline") {
         res.toks <- flex_tokens(lx) $(var l : FlexLexer) => c_next(l)
+    } elif (shape == "pp") {
+        res.toks <- flex_tokens(lx) $(var l : FlexLexer) => c_next_pp(l)
     } else {
         let scan = c_scanner(shape)
         res.toks <- flex_tokens(lx) $(var l : FlexLexer) => invoke(scan, l)
@@ -594,6 +601,16 @@ def lex_filtered(mode : string; text : string; var typedefs : table<string; int>
     return <- res
 }
 
+//! `text` lexed by `mode` once with no filter, the identifier texts
+//! resolved: the preprocessing tokens of `--mode pp` as the lexer
+//! gives them
+def lex_unfiltered(mode : string; text : string; typedefs : table<string; int>;
+                   var rules : array<ReRule>) : Filtered {
+    var inscope raw <- lex_mode(mode, text, typedefs, rules)
+    resolve_text(raw)
+    return <- Filtered(toks <- raw.toks, typedef_count = length(typedefs))
+}
+
 //! a count-only scan of the default shape: the tokens and the
 //! symbols the lexer ended with, the heap and string-heap allocations
 //! of the last pass's loop, and each pass's milliseconds, sorted
@@ -634,7 +651,7 @@ def time_count(text : string; typedefs : table<string; int>; passes : int) : Cou
 
 [CommandLineArgs]
 struct CompareArgs {
-    @clarg_doc = "the lexer: flex, table, flex-call, flex-dgoto, flex-dtree, goto, goto-dgoto, reader, probe or regex"
+    @clarg_doc = "the lexer: flex, table, flex-call, flex-dgoto, flex-dtree, goto, goto-dgoto, reader, pp, probe or regex"
     mode : string = "flex"
     @clarg_doc = "print NAME, text and line per token, tab-separated"
     dump : bool
@@ -665,8 +682,15 @@ def main() : int {
         }
         var inscope typedefs : table<string; int>
         typedefs["__builtin_va_list"] = 1
-        var inscope filtered <- lex_filtered(args.mode, text, typedefs, rules)
-        if (args.dump) {
+        let pp = args.mode == "pp"
+        var inscope filtered <- (pp ? lex_unfiltered(args.mode, text, typedefs, rules)
+            : lex_filtered(args.mode, text, typedefs, rules))
+        if (args.dump && pp) {
+            for (t in filtered.toks) {
+                print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\t{t.has_space ? "space" : "-"}"
+                    + "\t{t.at_bol ? "bol" : "-"}\n")
+            }
+        } elif (args.dump) {
             for (t in filtered.toks) {
                 print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\n")
             }

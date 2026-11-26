@@ -12,6 +12,7 @@ require ../examples/c_lexer/c_lexer.das
 require ../examples/c_lexer/c_lexer_variants.das
 require ../examples/c_lexer/c_lexer_goto.das
 require ../examples/c_lexer/c_lexer_reader.das
+require ../examples/c_lexer/c_lexer_pp.das
 require ../examples/c_lexer/gen_variants.das
 require ../examples/c_lexer/c_lex_compare.das
 
@@ -336,10 +337,10 @@ def test_columns_after_cut_and_bom(t : T?) {
     t |> equal(cut_texts, ["ab\xC3\x97", "ab"])
 }
 
-[test(description = "gen_variants.das over the rules of c_next writes exactly the checked-in c_lexer_goto.das and c_lexer_variants.das, line ends aside")]
+[test(description = "gen_variants.das over the rules of c_next writes exactly the checked-in c_lexer_goto.das, c_lexer_variants.das and c_lexer_pp.das, line ends aside")]
 def test_generated_variants_current(t : T?) {
     let files <- generated_files(dir_name(example_path("c_lexer.das")))
-    t |> equal([for (f in files); base_name(f.path)], ["c_lexer_goto.das", "c_lexer_variants.das"])
+    t |> equal([for (f in files); base_name(f.path)], ["c_lexer_goto.das", "c_lexer_variants.das", "c_lexer_pp.das"])
     for (f in files) {
         t |> equal(replace(fread(f.path), "\r\n", "\n"), replace(f.text, "\r\n", "\n"), base_name(f.path))
     }
@@ -480,4 +481,43 @@ def test_lexed_owns_span_bytes(t : T?) {
     } else {
         t |> success(!empty(lexed.src) && lexed.syms.src == unsafe(addr<uint8 const?>(lexed.src[0])))
     }
+}
+
+//! every preprocessing token of `src`, `NAME:text/flags`
+def private pp_tokens(src : string) : array<string> {
+    var lx : FlexLexer
+    c_open(lx, src)
+    var out : array<string>
+    while (c_next_pp(lx)) {
+        out |> push("{c_token_name(lx.tok.kind)}:{text(lx)}/{flags_of(lx)}")
+    }
+    return <- out
+}
+
+[test(description = "the C pp lexer takes a pp-number of C11 6.4.8 whole: exponent signs after e, E, p and P, a leading dot, letters and dots after the digits")]
+def test_pp_number(t : T?) {
+    t |> equal(pp_tokens("1e+5 0x1.p-3 .5e 12abc 0xe+1 1E-2f 1e-5"),
+               ["PP_NUMBER:1e+5/b", "PP_NUMBER:0x1.p-3/s", "PP_NUMBER:.5e/s", "PP_NUMBER:12abc/s",
+                "PP_NUMBER:0xe+1/s", "PP_NUMBER:1E-2f/s", "PP_NUMBER:1e-5/s"])
+    t |> equal(pp_tokens("1..2"), ["PP_NUMBER:1..2/b"])
+    t |> equal(pp_tokens("..5"), [".:./b", "PP_NUMBER:.5/"])
+    t |> equal(pp_tokens("1+5 x.5"), ["PP_NUMBER:1/b", "+:+/", "PP_NUMBER:5/", "IDENTIFIER:x/s", "PP_NUMBER:.5/"])
+}
+
+[test(description = "the C pp lexer takes # and ## as punctuators, # at the start of a line at_bol and # inside one not")]
+def test_pp_hash(t : T?) {
+    t |> equal(pp_tokens("#define s(x) #x ## y\n  # a#b"),
+               ["#:#/b", "IDENTIFIER:define/", "IDENTIFIER:s/s", "(:(/", "IDENTIFIER:x/", "):)/",
+                "#:#/s", "IDENTIFIER:x/", "HASHHASH:##/s", "IDENTIFIER:y/s", "#:#/sb",
+                "IDENTIFIER:a/s", "#:#/", "IDENTIFIER:b/"])
+}
+
+[test(description = "lex_unfiltered lexes --mode pp once with no filter: a GNU extension the filter drops stays, each token keeps its flags and an identifier its text")]
+def test_compare_pp_unfiltered(t : T?) {
+    var inscope typedefs : table<string; int>
+    var rules : array<ReRule>
+    var inscope res <- lex_unfiltered("pp", "#if X\n1.e+2 __attribute__((x))", typedefs, rules)
+    t |> equal([for (tk in res.toks); "{c_token_name(tk.kind)}:{tk.text}/{tk.has_space ? "s" : ""}{tk.at_bol ? "b" : ""}"],
+               ["#:#/b", "IF:if/", "IDENTIFIER:X/s", "PP_NUMBER:1.e+2/sb", "IDENTIFIER:__attribute__/s", "(:(/", "(:(/",
+                "IDENTIFIER:x/", "):)/", "):)/"])
 }

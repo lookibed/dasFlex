@@ -4,8 +4,9 @@ options indenting = 4
 module c_lexer shared public
 
 // A C11 lexer on dasFlex: the rules of the classic c11.l (Degener/Lee) as [flex] rules. Token kinds
-// above 127 are the grammar's named terminals in the yacc order; a single-character punctuator is
-// its own byte, as in yacc. Keywords are one identifier rule plus a
+// above 127 are the grammar's named terminals in the yacc order, then the two kinds only the
+// preprocessing-token lexer `c_lexer_pp` emits; a single-character punctuator is its own byte, as
+// in yacc. Keywords are one identifier rule plus a
 // symbol lookup in the action: `c_open` interns the keywords with
 // their kinds into `lx.syms`, `c_typedef` turns a name into a
 // TYPEDEF_NAME, and every other name lexes as IDENTIFIER.
@@ -90,6 +91,8 @@ enum CTok {
     NORETURN = 198
     STATIC_ASSERT = 199
     THREAD_LOCAL = 200
+    PP_NUMBER = 201
+    HASHHASH = 202
 }
 
 let KEYWORDS <- {
