@@ -262,7 +262,8 @@ def private preimage(t : FlexTables) : Preimage {
     return <- p
 }
 
-//! one block per `accept` value, the dead state alone; every block starts on the work list
+//! one block per `accept` value, the dead state alone; every block but the dead state's starts on
+//! the work list
 def private initial_partition(t : FlexTables) : Partition {
     let n = t.nstates + 1
     var p : Partition
@@ -301,6 +302,7 @@ def private initial_partition(t : FlexTables) : Partition {
     p.in_work |> resize(nblocks)
     p.work |> reserve(n)
     for (b in range(nblocks)) {
+        continue if (b == p.blk[t.nstates])
         p.work |> push(b)
         p.in_work[b] = true
     }
