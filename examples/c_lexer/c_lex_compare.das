@@ -675,12 +675,19 @@ struct CompareArgs {
     files : array<string>
 }
 
+//! `--count` asked for without `--time N`, or with a mode `time_count` does not scan
+def count_usage_error(args : CompareArgs) : bool =>
+    args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline" && args.mode != "pp"))
+
+//! the `TIME` and `HEAP` lines' tag of a `--count` run: the pp lexer's or the compiler-phase lexer's
+def count_tag(pp : bool) : string => pp ? "pp+count" : "flex+count"
+
 [export]
 def main() : int {
     var args = CompareArgs()
     let rc = parse_args_with_help(args, "c_lex_compare")
     return rc if (rc >= 0)
-    if (args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline" && args.mode != "pp"))) {
+    if (count_usage_error(args)) {
         print("usage: c_lex_compare -- --mode flex|flex-inline|pp --time N --count files...\n")
         return 1
     }
@@ -704,7 +711,7 @@ def main() : int {
         if (args.count) {
             let pp = args.mode == "pp"
             var inscope run <- time_count(text, typedefs, args.time, pp)
-            let tag = pp ? "pp+count" : "flex+count"
+            let tag = count_tag(pp)
             print("TIME {tag} {path} median_ms={run.times[length(run.times) / 2]} min={run.times[0]} max={run.times[length(run.times) - 1]} bytes={length(text)} tokens={run.tokens}\n")
             print("HEAP {tag} {path} tokens={run.tokens} symbols={run.symbols} heap_allocs={int64(run.heap_allocs)} string_allocs={int64(run.string_allocs)}\n")
         } elif (args.time > 0) {

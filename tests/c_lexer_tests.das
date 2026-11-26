@@ -477,6 +477,18 @@ def test_count_run_pp(t : T?) {
     t |> equal(pp.string_allocs, 0ul)
 }
 
+[test(description = "c_lex_compare takes --count with --time N in the flex, flex-inline and pp modes, and refuses it in another mode or without --time; a pp run tags its lines pp+count, any other flex+count")]
+def test_count_usage(t : T?) {
+    for (mode, refused in ["flex", "flex-inline", "pp", "goto"], [false, false, false, true]) {
+        var inscope args = CompareArgs(mode = mode, time = 1, count = true)
+        t |> equal(count_usage_error(args), refused, mode)
+    }
+    var inscope untimed = CompareArgs(mode = "pp", count = true)
+    t |> success(count_usage_error(untimed))
+    t |> equal(count_tag(true), "pp+count")
+    t |> equal(count_tag(false), "flex+count")
+}
+
 [test(description = "the token arrays of c_lex_compare carry an identifier as its symbol with no text until resolve_text, any other token as its text")]
 def test_compare_tokens_by_symbol(t : T?) {
     var inscope typedefs : table<string; int>
