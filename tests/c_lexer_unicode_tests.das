@@ -30,7 +30,10 @@ struct UnicodeCase {
     tokens : array<CaseTok>
 }
 
-def cases_dir() : string => path_join(dir_name(string(get_line_info().fileInfo.name)), "../examples/c_lexer/unicode_cases")
+//! the path of `name` under examples/c_lexer/
+def example_path(name : string) : string => path_join(dir_name(string(get_line_info().fileInfo.name)), "../examples/c_lexer/{name}")
+
+def cases_dir() : string => example_path("unicode_cases")
 
 def read_cases() : array<UnicodeCase> {
     var cases : array<UnicodeCase>
@@ -177,6 +180,51 @@ def test_ucn_past_unicode(t : T?) {
     t |> equal(default_stream("a\\U00110000 b"), ["a", "error 1"])
     t |> equal(default_stream("\\UFFFFFFFF"), ["error 0"])
     t |> equal(default_stream("a\\U000EFFFD"), ["a\\U000EFFFD"])
+}
+
+//! the code points of Annex D.1 that D.2 leaves, as ranges: the start set of an identifier
+def private start_ranges() : array<uint2> {
+    var out : array<uint2>
+    for (r in C11_IDENT_RANGES) {
+        var lo = r.x
+        for (x in C11_NOT_INITIAL) {
+            continue if (x.y < lo || x.x > r.y)
+            out |> push(uint2(lo, x.x - 1u)) if (x.x > lo)
+            lo = max(lo, x.y + 1u)
+        }
+        out |> push(uint2(lo, r.y)) if (lo <= r.y)
+    }
+    return <- out
+}
+
+//! a code point as a regex escape: `\uHHHH`, or `\UHHHHHHHH` past the BMP
+def private cp_escape(cp : uint) : string => cp > 0xFFFFu ? "\\U{fmt(":08X", cp)}" : "\\u{fmt(":04X", cp)}"
+
+//! the regex set of the ASCII characters `ascii` and the code-point ranges `ranges`
+def private set_text(ascii : string; ranges : array<uint2>) : string {
+    let items = join([for (r in ranges); r.x == r.y ? cp_escape(r.x) : "{cp_escape(r.x)}-{cp_escape(r.y)}"], "")
+    return "[{ascii}{items}]"
+}
+
+[test(description = "the identifier sets of c_lexer.das's rule and of the reader's L and A definitions are exactly the Annex D tables c_ident_cut reads: D.1 minus D.2 to start, D.1 to continue")]
+def test_annex_d_sets_match_tables(t : T?) {
+    var inscope ident <- [for (r in C11_IDENT_RANGES); r]
+    let start = set_text("a-zA-Z_$", start_ranges())
+    let cont = set_text("a-zA-Z_$0-9", ident)
+    let rule_line = "    rule(\"{replace(start, "\\", "\\\\")}{replace(cont, "\\", "\\\\")}*\") \{"
+    var inscope rules <- split(fread(example_path("c_lexer.das")), "\n")
+    let at = find_index_if(rules) $(line) => starts_with(line, "    rule(\"[a-zA-Z_$")
+    t |> success(at >= 0, "c_lexer.das holds the Annex D identifier rule")
+    t |> equal(at >= 0 ? rules[at] : "", rule_line, "c_lexer.das identifier rule")
+    var defs : table<string; string>
+    for (line in split(fread(example_path("c_lexer_reader.das")), "\n")) {
+        let blank = find(line, ' ')
+        if (blank > 0) {
+            defs[slice(line, 0, blank)] = strip(slice(line, blank))
+        }
+    }
+    t |> equal(defs?["L"] ?? "", start, "c_lexer_reader.das L")
+    t |> equal(defs?["A"] ?? "", cont, "c_lexer_reader.das A")
 }
 
 //! `kind text line` per token
