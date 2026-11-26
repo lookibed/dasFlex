@@ -5,6 +5,7 @@ require dastest/testing_boost public
 require daslib/fio
 require daslib/rtti
 require daslib/strings_boost
+require daslib/stringify
 require strings
 require math
 require _flex_test_helpers
@@ -12,6 +13,7 @@ require ../examples/c_lexer/c_lexer.das
 require ../examples/c_lexer/c_lexer_variants.das
 require ../examples/c_lexer/c_lexer_goto.das
 require ../examples/c_lexer/c_lexer_reader.das
+require ../examples/c_lexer/c_lexer_pp.das
 require ../examples/c_lexer/gen_variants.das
 require ../examples/c_lexer/c_lex_compare.das
 
@@ -336,13 +338,45 @@ def test_columns_after_cut_and_bom(t : T?) {
     t |> equal(cut_texts, ["ab\xC3\x97", "ab"])
 }
 
-[test(description = "gen_variants.das over the rules of c_next writes exactly the checked-in c_lexer_goto.das and c_lexer_variants.das, line ends aside")]
+[test(description = "gen_variants.das over the rules of c_next writes exactly the checked-in c_lexer_goto.das, c_lexer_variants.das and c_lexer_pp.das, line ends aside")]
 def test_generated_variants_current(t : T?) {
     let files <- generated_files(dir_name(example_path("c_lexer.das")))
-    t |> equal([for (f in files); base_name(f.path)], ["c_lexer_goto.das", "c_lexer_variants.das"])
+    t |> equal([for (f in files); base_name(f.path)], ["c_lexer_goto.das", "c_lexer_variants.das", "c_lexer_pp.das"])
     for (f in files) {
         t |> equal(replace(fread(f.path), "\r\n", "\n"), replace(f.text, "\r\n", "\n"), base_name(f.path))
     }
+}
+
+//! a rule list of numeric constants alone, ending with its newline: no start condition, no
+//! identifier rule
+let private NUMBERS_ONLY_RULES = %stringify~
+    rule("[0-9]+") {
+        lx |> emit(CTok.I_CONSTANT)
+    }
+    rule("[0-9]+\\.[0-9]*") {
+        lx |> emit(CTok.F_CONSTANT)
+    }
+%%
+
+//! `pp_rule_lines` over `NUMBERS_ONLY_RULES`, PP_NUMBER stamped as kind 1 and PP_OTHER as 2, lexing
+//! `src`: the issues, or "" and the stream as `shape_streams` writes it
+def private numbers_only_pp_stream(src : string) : tuple<issues : string; streams : array<array<string>>> {
+    let rules = replace(replace(pp_rule_lines(NUMBERS_ONLY_RULES), "CTok.PP_NUMBER", "1"), "CTok.PP_OTHER", "2")
+    return <- shape_streams("numbers_only_pp.das", rules, [""], src, tier_is_jit())
+}
+
+[test(description = "pp_rule_lines appends the catch-all PP_OTHER rule at the end of a rule list that ends with its newline and holds no start condition")]
+def test_pp_rule_lines_other_at_end(t : T?) {
+    let res <- numbers_only_pp_stream("12@")
+    t |> equal(res.issues, "")
+    t |> equal(res.streams[0], ["1@1:1:12", "2@1:3:@", ""])
+}
+
+[test(description = "pp_rule_lines over rules with no extended identifier rule gives the pp-number no identifier-continue characters: 1$ is a pp-number and a PP_OTHER")]
+def test_pp_rule_lines_no_ident_continue(t : T?) {
+    let res <- numbers_only_pp_stream("1$")
+    t |> equal(res.issues, "")
+    t |> equal(res.streams[0], ["1@1:1:1", "2@1:2:$", ""])
 }
 
 //! `kind symbol` of every token of `src`, `typedef_names` declared
@@ -433,6 +467,28 @@ def test_scan_allocates_per_name(t : T?) {
     t |> equal(many.heap_allocs, one.heap_allocs)
 }
 
+[test(description = "a count-only scan with pp counts the preprocessing tokens of c_next_pp - a # line is tokens, not skipped - and builds no string")]
+def test_count_run_pp(t : T?) {
+    var inscope none : table<string; int>
+    var inscope plain <- time_count("#if X\nint x;", none, 1)
+    t |> equal(plain.tokens, 3)
+    var inscope pp <- time_count("#if X\nint x;", none, 1, true)
+    t |> equal(pp.tokens, 6)
+    t |> equal(pp.string_allocs, 0ul)
+}
+
+[test(description = "c_lex_compare takes --count with --time N in the flex, flex-inline and pp modes, and refuses it in another mode or without --time; a pp run tags its lines pp+count, any other flex+count")]
+def test_count_usage(t : T?) {
+    for (mode, refused in ["flex", "flex-inline", "pp", "goto"], [false, false, false, true]) {
+        var inscope args = CompareArgs(mode = mode, time = 1, count = true)
+        t |> equal(count_usage_error(args), refused, mode)
+    }
+    var inscope untimed = CompareArgs(mode = "pp", count = true)
+    t |> success(count_usage_error(untimed))
+    t |> equal(count_tag(true), "pp+count")
+    t |> equal(count_tag(false), "flex+count")
+}
+
 [test(description = "the token arrays of c_lex_compare carry an identifier as its symbol with no text until resolve_text, any other token as its text")]
 def test_compare_tokens_by_symbol(t : T?) {
     var inscope typedefs : table<string; int>
@@ -480,4 +536,126 @@ def test_lexed_owns_span_bytes(t : T?) {
     } else {
         t |> success(!empty(lexed.src) && lexed.syms.src == unsafe(addr<uint8 const?>(lexed.src[0])))
     }
+}
+
+//! every preprocessing token of `src`, `NAME:text/flags`
+def private pp_tokens(src : string) : array<string> {
+    var lx : FlexLexer
+    return <- lex_tokens(lx, src, $(var l : FlexLexer) => c_next_pp(l),
+                         $(var l : FlexLexer) => "{c_token_name(l.tok.kind)}:{text(l)}/{flags_of(l.tok)}")
+}
+
+[test(description = "the C pp lexer takes a pp-number of C11 6.4.8 whole: exponent signs after e, E, p and P, a leading dot, letters and dots after the digits")]
+def test_pp_number(t : T?) {
+    t |> equal(pp_tokens("1e+5 0x1.p-3 .5e 12abc 0xe+1 1E-2f 1e-5"),
+               ["PP_NUMBER:1e+5/b", "PP_NUMBER:0x1.p-3/s", "PP_NUMBER:.5e/s", "PP_NUMBER:12abc/s",
+                "PP_NUMBER:0xe+1/s", "PP_NUMBER:1E-2f/s", "PP_NUMBER:1e-5/s"])
+    t |> equal(pp_tokens("1..2"), ["PP_NUMBER:1..2/b"])
+    t |> equal(pp_tokens("..5"), [".:./b", "PP_NUMBER:.5/"])
+    t |> equal(pp_tokens("1+5 x.5"), ["PP_NUMBER:1/b", "+:+/", "PP_NUMBER:5/", "IDENTIFIER:x/s", "PP_NUMBER:.5/"])
+    t |> equal(pp_tokens("0x1P+3 1_000"), ["PP_NUMBER:0x1P+3/b", "PP_NUMBER:1_000/s"])
+}
+
+[test(description = "a pp-number continues with the identifier characters past ASCII and UCNs, as clang lexes them, and not with $")]
+def test_pp_number_identifier_nondigits(t : T?) {
+    t |> equal(pp_tokens("1\\u00e9 1\xC3\xA9x 2\\U0001F600 1$"),
+               ["PP_NUMBER:1\\u00e9/b", "PP_NUMBER:1\xC3\xA9x/s", "PP_NUMBER:2\\U0001F600/s", "PP_NUMBER:1/s",
+                "IDENTIFIER:$/"])
+}
+
+[test(description = "the C pp lexer takes any other character as a PP_OTHER token of its own (C11 6.4p3): @, a backquote, a lone backslash, a quote no literal closes, a character Annex D refuses, a byte no UTF-8 character starts with")]
+def test_pp_other(t : T?) {
+    t |> equal(pp_tokens("@ ` \\ x"), ["PP_OTHER:@/b", "PP_OTHER:`/s", "PP_OTHER:\\/s", "IDENTIFIER:x/s"])
+    t |> equal(pp_tokens("a\xC3\x97b \"c"), ["IDENTIFIER:a/b", "PP_OTHER:\xC3\x97/", "IDENTIFIER:b/", "PP_OTHER:\"/s",
+                                              "IDENTIFIER:c/"])
+    t |> equal(pp_tokens("x \x80;"), ["IDENTIFIER:x/b", "PP_OTHER:\x80/s", ";:;/"])
+    t |> equal(pp_tokens("\\u00e9x x\\u00D7y"), ["IDENTIFIER:\\u00e9x/b", "IDENTIFIER:x/s", "PP_OTHER:\\/",
+                                              "IDENTIFIER:u00D7y/"])
+}
+
+[test(description = "the C pp lexer lexes every identifier as IDENTIFIER, a keyword and a name the symbols carry as a typedef name too, and keeps its symbol")]
+def test_pp_identifiers_only(t : T?) {
+    var lx : FlexLexer
+    c_typedef(lx.syms, "T")
+    c_open(lx, "if int T")
+    var toks : array<string>
+    while (c_next_pp(lx)) {
+        toks |> push("{c_token_name(lx.tok.kind)}:{lx.tok.sym >= 0 ? symbol_text(lx.syms, lx.tok.sym) : "-"}")
+    }
+    t |> equal(toks, ["IDENTIFIER:if", "IDENTIFIER:int", "IDENTIFIER:T"])
+}
+
+[test(description = "the C pp lexer lexes every input of the Unicode case table to its end, the token-pasting and stringizing inputs among them")]
+def test_pp_lexes_every_case(t : T?) {
+    for (c in read_cases()) {
+        var lx : FlexLexer
+        c_open(lx, fread(path_join(cases_dir(), "{c.name}.c")))
+        while (c_next_pp(lx)) {
+        }
+        t |> success(!lx.failed && lx.pos == lx.len, "{c.name}: {lx.err}")
+    }
+}
+
+[test(description = "the three kinds only c_lexer_pp emits follow the yacc terminals: PP_NUMBER, HASHHASH and PP_OTHER right after THREAD_LOCAL")]
+def test_pp_kinds_follow_yacc(t : T?) {
+    let last = int(CTok.THREAD_LOCAL)
+    t |> equal([int(CTok.PP_NUMBER), int(CTok.HASHHASH), int(CTok.PP_OTHER)], [last + 1, last + 2, last + 3])
+}
+
+[test(description = "the C pp lexer takes # and ## as punctuators, # at the start of a line at_bol and # inside one not")]
+def test_pp_hash(t : T?) {
+    t |> equal(pp_tokens("#define s(x) #x ## y\n  # a#b"),
+               ["#:#/b", "IDENTIFIER:define/", "IDENTIFIER:s/s", "(:(/", "IDENTIFIER:x/", "):)/",
+                "#:#/s", "IDENTIFIER:x/", "HASHHASH:##/s", "IDENTIFIER:y/s", "#:#/sb",
+                "IDENTIFIER:a/s", "#:#/", "IDENTIFIER:b/"])
+}
+
+[test(description = "no scanner of C_SHAPES, the %flex~ reader among them, asks for the flags: each token keeps has_space and at_bol false")]
+def test_no_flags_every_c_shape(t : T?) {
+    let src = "int a;\n  b /* c\n */ c\nd /*\n*/\n/* e\n*/ f"
+    for (shape in C_SHAPES) {
+        var lx : FlexLexer
+        let scan = c_scanner(shape)
+        var inscope out <- lex_tokens(lx, src, $(var l : FlexLexer) => invoke(scan, l),
+                                      $(var l : FlexLexer) => "{text(l)}/{flags_of(l.tok)}")
+        t |> equal(out, ["int/", "a/", ";/", "b/", "c/", "d/", "f/"], shape)
+    }
+}
+
+[test(description = "the C pp lexer gives a newline inside a block comment no at_bol for the next token (C11 phase 3: the comment is one space), a newline before or after the comment one")]
+def test_pp_flags_block_comment(t : T?) {
+    t |> equal(pp_tokens("int a;\n  b /* c\n */ c\nd /*\n*/\n/* e\n*/ f"),
+               ["IDENTIFIER:int/b", "IDENTIFIER:a/s", ";:;/", "IDENTIFIER:b/sb", "IDENTIFIER:c/s",
+                "IDENTIFIER:d/sb", "IDENTIFIER:f/sb"])
+    t |> equal(pp_tokens("a /*1\n*/ /*2\n*/ b\n/*3*/ c"),
+               ["IDENTIFIER:a/b", "IDENTIFIER:b/s", "IDENTIFIER:c/sb"])
+}
+
+[test(description = "c_open skips a byte order mark at offset 0 as no text: the pp lexer's first token is at_bol without has_space, and one after a space has it")]
+def test_pp_flags_after_bom(t : T?) {
+    for (src, want in ["\xEF\xBB\xBFint x;", "\xEF\xBB\xBF int x;"], ["b", "sb"]) {
+        var lx : FlexLexer
+        c_open(lx, src)
+        t |> success(c_next_pp(lx))
+        t |> equal(flags_of(lx.tok), want, src)
+    }
+}
+
+[test(description = "the C pp lexer puts no # after a block comment that spans lines at the start of a line, unless the comment itself starts one")]
+def test_pp_hash_after_block_comment(t : T?) {
+    t |> equal(pp_tokens("x /*\n*/ #define\n/* a\n */ #y"),
+               ["IDENTIFIER:x/b", "#:#/s", "IDENTIFIER:define/", "#:#/sb", "IDENTIFIER:y/"])
+}
+
+[test(description = "lex_filtered lexes --mode pp once with no filter: a GNU extension the filter drops stays, each token keeps its flags and an identifier its text; dump_line adds the flag columns in pp mode only")]
+def test_compare_pp_unfiltered(t : T?) {
+    var inscope typedefs : table<string; int>
+    var rules : array<ReRule>
+    var inscope res <- lex_filtered("pp", "#if X\n1.e+2 __attribute__((x))", typedefs, rules)
+    t |> equal([for (tk in res.toks); dump_line(tk, true)],
+               ["#\t#\t1\t-\tbol", "IDENTIFIER\tif\t1\t-\t-", "IDENTIFIER\tX\t1\tspace\t-",
+                "PP_NUMBER\t1.e+2\t2\tspace\tbol", "IDENTIFIER\t__attribute__\t2\tspace\t-", "(\t(\t2\t-\t-",
+                "(\t(\t2\t-\t-", "IDENTIFIER\tx\t2\t-\t-", ")\t)\t2\t-\t-", ")\t)\t2\t-\t-"])
+    t |> equal(res.typedef_count, 0)
+    t |> equal(dump_line(res.toks[2], false), "IDENTIFIER\tX\t1")
 }

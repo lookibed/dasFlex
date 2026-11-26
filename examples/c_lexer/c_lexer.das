@@ -4,8 +4,9 @@ options indenting = 4
 module c_lexer shared public
 
 // A C11 lexer on dasFlex: the rules of the classic c11.l (Degener/Lee) as [flex] rules. Token kinds
-// above 127 are the grammar's named terminals in the yacc order; a single-character punctuator is
-// its own byte, as in yacc. Keywords are one identifier rule plus a
+// above 127 are the grammar's named terminals in the yacc order, then the three kinds only the
+// preprocessing-token lexer `c_lexer_pp` emits; a single-character punctuator is its own byte, as
+// in yacc. Keywords are one identifier rule plus a
 // symbol lookup in the action: `c_open` interns the keywords with
 // their kinds into `lx.syms`, `c_typedef` turns a name into a
 // TYPEDEF_NAME, and every other name lexes as IDENTIFIER.
@@ -90,6 +91,9 @@ enum CTok {
     NORETURN = 198
     STATIC_ASSERT = 199
     THREAD_LOCAL = 200
+    PP_NUMBER = 201
+    HASHHASH = 202
+    PP_OTHER = 203
 }
 
 let KEYWORDS <- {
@@ -259,27 +263,67 @@ def c_ident_prefix(bytes : auto; start, end : int) : int {
 def c_ident_cut(var lx : FlexLexer) : bool {
     let n = c_ident_prefix(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
     return true if (n == lx.tok.len)
-    lx.pos = lx.tok.start + n
-    lx.line = lx.tok.line
-    lx.col = lx.tok.col + n
-    if (n > 0) {
-        lx.tok.len = n
-        lx.tok.text = ""
-        return true
-    }
+    c_cut(lx, n)
+    return true if (n > 0)
     lx.failed = true
     lx.err = flex_error_text(lx)
     return false
 }
 
+//! the token shortened to its first `n` bytes, the cursor right after them
+def private c_cut(var lx : FlexLexer; n : int) {
+    lx.pos = lx.tok.start + n
+    lx.line = lx.tok.line
+    lx.col = lx.tok.col + n
+    lx.tok.len = n
+    lx.tok.text = ""
+}
+
+//! the pp lexer's identifier rule: the token's symbol interned, its kind IDENTIFIER whatever kind
+//! the symbol carries - a preprocessing token is an identifier, never a keyword or a typedef name
+def c_pp_word(var lx : FlexLexer) : int {
+    intern(lx)
+    return int(CTok.IDENTIFIER)
+}
+
+//! the pp lexer's extended identifier rule: the identifier that opens the token, or, when none does,
+//! its first character alone - a byte for the `\` of a UCN - as PP_OTHER (C11 6.4p3)
+[arch(at="../../ARCHITECTURE_TOKENS.md#pp-tokens")]
+def c_pp_ident_cut(var lx : FlexLexer) : int {
+    let n = c_ident_prefix(lx.bytes, lx.tok.start, lx.tok.start + lx.tok.len)
+    if (n > 0) {
+        c_cut(lx, n)
+        return c_pp_word(lx)
+    }
+    let b = int(lx.bytes[lx.tok.start])
+    c_cut(lx, b == '\\' ? 1 : utf8_at(lx.bytes, lx.tok.start).y)
+    return int(CTok.PP_OTHER)
+}
+
+//! the pp lexer's `/*` rule: the line the comment opens on taken off `prev_end_line`, for
+//! `c_pp_comment_close` to add the line it closes on
+[arch(at="../../ARCHITECTURE_TOKENS.md#pp-flags")]
+def c_pp_comment_open(var lx : FlexLexer) {
+    lx.prev_end_line -= lx.tok.line
+}
+
+//! the pp lexer's `*/` rule: `prev_end_line` moved by the lines the comment spans, so a token on the
+//! comment's last line is at the start of a line exactly when it would be with the comment one space
+[arch(at="../../ARCHITECTURE_TOKENS.md#pp-flags")]
+def c_pp_comment_close(var lx : FlexLexer) {
+    lx.prev_end_line += lx.tok.line
+}
+
 //! `flex_open` for C source: the keywords interned (`c_symbols`), a
-//! UTF-8 byte order mark at offset 0 skipped as clang and gcc skip it
+//! UTF-8 byte order mark at offset 0 skipped as clang and gcc skip it -
+//! not text, so the first token has no `has_space` for it
 def c_open(var lx : FlexLexer; src : string; file : string = "") {
     flex_open(lx, src, file)
     c_symbols(lx.syms)
     if (contains_utf8_bom(lx.bytes)) {
         lx.pos = 3
         lx.col = 4
+        lx.prev_end = 3
     }
 }
 

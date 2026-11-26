@@ -894,14 +894,227 @@ def test_tier_default_mode(t : T?) {
     t |> equal(compile_issues("tier_jit.das", text, true), "")
 }
 
-[test(description = "a mode, dispatch or matcher value the annotation does not know fails the compile naming the value and the ones it takes")]
+[test(description = "a mode, dispatch, matcher or flags value the annotation does not know fails the compile naming the value or the ones it takes")]
 def test_bad_shape_values(t : T?) {
     let rules = "    rule(\"a\") \{ lx |> emit(1) \}\n"
-    for (shape, want in ["mode = \"tabel\"", "dispatch = \"switch\"", "matcher = \"loop\""],
+    for (shape, want in ["mode = \"tabel\"", "dispatch = \"switch\"", "matcher = \"loop\"", "flags = \"yes\""],
             ["[flex] mode is table or goto, not tabel",
              "[flex] dispatch is if, goto or tree, not switch",
-             "[flex] matcher is call or inline, not loop"]) {
+             "[flex] matcher is call or inline, not loop",
+             "[flex] flags is true or false"]) {
         let res <- shape_streams("bad_shape.das", rules, [shape], "a")
         t |> success(find(res.issues, want) >= 0, res.issues)
+    }
+}
+
+[test(description = "an argument [flex] or [flex_text] does not take, or one given twice, fails the compile naming it, and the arguments the annotation takes")]
+def test_bad_argument_names(t : T?) {
+    let rules = "    rule(\"a\") \{ lx |> emit(1) \}\n"
+    for (shape, want in ["flag = true", "mode = \"goto\", flags = true, mode = \"table\"", "flags = true, flags = false"],
+            ["[flex] unknown argument `flag`; the arguments are mode, dispatch, matcher, flags",
+             "[flex] argument `mode` given twice",
+             "[flex] argument `flags` given twice"]) {
+        let res <- shape_streams("bad_arg.das", rules, [shape], "a")
+        t |> success(find(res.issues, want) >= 0, res.issues)
+    }
+    let text_lexer = ("options gen2\nrequire flex/flex_macro\n"
+        + "[flex_text(tokens = \"\", conditions = \"\", flag = true)]\n"
+        + "def lex0(var lx : FlexLexer) : bool \{\n    rule(\"a\", \"\") \{ emit(1) \}\n\}\n")
+    let issues = compile_issues("bad_text_arg.das", text_lexer)
+    t |> success(find(issues, "[flex_text] unknown argument `flag`; the arguments are mode, dispatch, matcher, flags, tokens, conditions") >= 0, issues)
+}
+
+[test(description = "a rule body reading lx.tok.at_bol or lx.tok.has_space in a lexer that does not ask for the flags fails the compile at the read, naming the flag and the argument to add")]
+def test_flag_read_without_flags(t : T?) {
+    for (flag in ["at_bol", "has_space"]) {
+        let rules = "    rule(\"a\") \{\n        lx |> emit(lx.tok.{flag} ? 1 : 2)\n    \}\n"
+        for (shape in ["", "flags = false", "mode = \"goto\""]) {
+            let res <- shape_streams("flag_read.das", rules, [shape], "a")
+            t |> success(find(res.issues, "[flex] the rule body reads lx.tok.{flag} but the lexer does not ask for the flags: add flags = true") >= 0, "{shape}: {res.issues}")
+        }
+    }
+}
+
+//! every explicit shape and the default one, each asking for the token flags
+let private FLAG_SHAPES <- [for (shape in [REF_SHAPE, "mode = \"table\", dispatch = \"if\"",
+                                          "mode = \"table\", dispatch = \"goto\"",
+                                          "mode = \"table\", dispatch = \"tree\"",
+                                          "mode = \"goto\", dispatch = \"if\"",
+                                          "mode = \"goto\", dispatch = \"goto\"",
+                                          "mode = \"goto\", dispatch = \"tree\"", ""]);
+                            empty(shape) ? "flags = true" : "{shape}, flags = true"]
+
+//! a small grammar for the token flags: words, a `#` whose kind says whether its body saw `at_bol`, a
+//! token that ends its line, a string that may span lines, and whitespace and comments skipped
+let private FLAG_RULES = %stringify~
+    rule("[a-z]+") {
+        lx |> emit(1)
+    }
+    rule("#") {
+        lx |> emit(lx.tok.at_bol ? 2 : 3)
+    }
+    rule("!\\n") {
+        lx |> emit(4)
+    }
+    rule("\"[^\"]*\"") {
+        lx |> emit(5)
+    }
+    rule("[ \\n]+") {
+    }
+    rule("/\\*[^*]*\\*/") {
+    }
+%%
+
+//! every flagged shape's stream of `FLAG_RULES` over `src`, each checked against `want`
+def private check_flag_streams(t : T?; name, src : string; want : array<string>) {
+    let res <- shape_streams(name, FLAG_RULES, FLAG_SHAPES, src, tier_is_jit())
+    t |> equal(res.issues, "")
+    for (shape, stream in FLAG_SHAPES, res.streams) {
+        t |> equal(stream, want, shape)
+    }
+}
+
+[test(description = "a flags lexer marks has_space on a token after skipped whitespace or a comment, at_bol on the first token of the input and of each line - after a skipped newline, one inside a skipped comment, or a token that ended its line; a rule body reads at_bol; every shape gives the same flags")]
+def test_token_flags(t : T?) {
+    check_flag_streams(t, "flags.das", "a b/*c*/d\n  e\n#f g#h !\nk\nx/*\n*/y",
+                       ["1@1:1/b:a", "1@1:3/s:b", "1@1:9/s:d", "1@2:3/sb:e", "2@3:1/sb:#", "1@3:2:f",
+                        "1@3:4/s:g", "3@3:5:#", "1@3:6:h", "4@3:8/s:!\n", "1@4:1/b:k", "1@5:1/sb:x",
+                        "1@6:3/sb:y", ""])
+}
+
+[test(description = "the first token after leading whitespace has has_space and at_bol, and so does one after leading newlines")]
+def test_token_flags_leading_space(t : T?) {
+    check_flag_streams(t, "flags_lead.das", "  a b", ["1@1:3/sb:a", "1@1:5/s:b", ""])
+    check_flag_streams(t, "flags_lead_nl.das", "\n\n#a", ["2@3:1/sb:#", "1@3:2:a", ""])
+}
+
+[test(description = "a token right after one that spans lines shares its last line, so it is not at_bol; a newline after a multi-line token puts the next one at the start of a line")]
+def test_token_flags_multiline_token(t : T?) {
+    check_flag_streams(t, "flags_multi.das", "a \"x\ny\"b \"\n\"\nc",
+                       ["1@1:1/b:a", "5@1:3/s:\"x\ny\"", "1@2:3:b", "5@2:5/s:\"\n\"", "1@4:1/sb:c", ""])
+}
+
+[test(description = "at_bol survives a later skip on the same line: a skipped newline then a comment, a token that ended its line then a space")]
+def test_bol_kept_over_same_line_skip(t : T?) {
+    check_flag_streams(t, "flags_keep.das", "a\n/*c*/ b !\n x",
+                       ["1@1:1/b:a", "1@2:7/sb:b", "4@2:9/s:!\n", "1@3:2/sb:x", ""])
+}
+
+//! a word rule whose body reads `has_space` to choose its kind, and spaces skipped
+let private SPACE_READ_RULES = %stringify~
+    rule("[a-z]+") {
+        lx |> emit(lx.tok.has_space ? 2 : 1)
+    }
+    rule(" +") {
+    }
+%%
+
+[test(description = "a rule body reads has_space already set for its own token: the word after a skipped space sees it, the first word does not; every shape gives the same kinds")]
+def test_has_space_in_rule_body(t : T?) {
+    let res <- shape_streams("flags_body.das", SPACE_READ_RULES, FLAG_SHAPES, "a b", tier_is_jit())
+    t |> equal(res.issues, "")
+    for (stream in res.streams) {
+        t |> equal(stream, ["1@1:1/b:a", "2@1:3/s:b", ""])
+    }
+}
+
+//! rules that hand a token out by their own `return`: one returning true, one a condition, and a
+//! skip whose block returns true to the body, not to the scanner
+let private RETURN_RULES = %stringify~
+    rule("%") {
+        lx |> emit(7)
+        return true
+    }
+    rule("@") {
+        lx |> emit(8)
+        return lx.tok.len == 1
+    }
+    rule("[a-z]+") {
+        lx |> emit(1)
+    }
+    rule(" +") {
+        if (!invoke($() : bool { return true; })) {
+            lx |> emit(9)
+        }
+    }
+%%
+
+[test(description = "a rule body's own return hands its token out as the end of the rule does: the token right after it has neither flag; a return inside a block of a skipping body leaves the next token has_space; every shape gives the same flags")]
+def test_flags_after_body_return(t : T?) {
+    let res <- shape_streams("flags_return.das", RETURN_RULES, FLAG_SHAPES, "%b @c %%d", tier_is_jit())
+    t |> equal(res.issues, "")
+    for (shape, stream in FLAG_SHAPES, res.streams) {
+        t |> equal(stream, ["7@1:1/b:%", "1@1:2:b", "8@1:4/s:@", "1@1:5:c", "7@1:7/s:%", "7@1:8:%", "1@1:9:d", ""], shape)
+    }
+}
+
+[test(description = "a bare return in a flags lexer's rule body fails the compile as a bool function's bare return does, not inside the macro")]
+def test_bare_return_in_flags_body(t : T?) {
+    let rules = "    rule(\"a\") \{\n        lx |> emit(1)\n        return\n    \}\n"
+    let res <- shape_streams("bare_return.das", rules, ["flags = true"], "a")
+    t |> success(find(res.issues, "expecting a return value") >= 0, res.issues)
+    t |> success(find(res.issues, "macro caused exception") < 0, res.issues)
+}
+
+[flex(flags = true)]
+def flag_words(var lx : FlexLexer) : bool {
+    rule("[a-z]+") {
+        lx |> emit(1)
+    }
+    rule(" +") {
+    }
+}
+
+[test(description = "flex_open starts a flags lexer reused on a second input with its first token at_bol and no has_space, though the first input ended in skipped text")]
+def test_token_flags_reopen(t : T?) {
+    var lx : FlexLexer
+    let first <- lex_tokens(lx, "a b ", $(var l : FlexLexer) => flag_words(l), $(var l : FlexLexer) => flags_of(l.tok))
+    t |> equal(first, ["b", "s"])
+    let second <- lex_tokens(lx, "c ", $(var l : FlexLexer) => flag_words(l), $(var l : FlexLexer) => flags_of(l.tok))
+    t |> equal(second, ["b"])
+}
+
+[test(description = "a lexer that does not ask for the flags leaves has_space and at_bol false on every token, a lexer opened after a flags lexer too")]
+def test_unflagged_tokens_carry_no_flags(t : T?) {
+    var lx : FlexLexer
+    let flagged <- lex_tokens(lx, " a\nb", $(var l : FlexLexer) => flag_words_nl(l), $(var l : FlexLexer) => flags_of(l.tok))
+    t |> equal(flagged, ["sb", "sb"])
+    let plain <- lex_tokens(lx, " if\n x  \"s\"\n7", $(var l : FlexLexer) => mini(l), $(var l : FlexLexer) => flags_of(l.tok))
+    t |> equal(plain, ["", "", "", ""])
+}
+
+[flex(flags = true)]
+def flag_words_nl(var lx : FlexLexer) : bool {
+    rule("[a-z]+") {
+        lx |> emit(1)
+    }
+    rule("[ \\n]+") {
+    }
+}
+
+[test(description = "a flags lexer writes the token flags in the rule bodies that are not empty and in no empty one: a skipped span of whitespace pays nothing")]
+def test_flag_writes_skip_empty_bodies(t : T?) {
+    let rules = replace(FLAG_RULES, "lx.tok.at_bol ? 2 : 3", "3")
+    for (shape in ["flags = true", "mode = \"goto\", flags = true", "mode = \"table\", dispatch = \"tree\", flags = true"]) {
+        let flagged = scanner_text("flagged_empty.das", rules, shape)
+        t |> equal(length(split(flagged, "has_space")) - 1, 4, shape)
+        t |> equal(length(split(flagged, "at_bol")) - 1, 4, shape)
+    }
+}
+
+[test(description = "a lexer that does not ask for the flags, or asks for none, generates a scanner that names no flag and no field the flags are derived from; one that asks writes them")]
+def test_unflagged_scanner_shape(t : T?) {
+    let rules = replace(FLAG_RULES, "lx.tok.at_bol ? 2 : 3", "3")
+    for (shape in ["", "mode = \"goto\"", "flags = false"]) {
+        let plain = scanner_text("plain.das", rules, shape)
+        t |> success(find(plain, "while") >= 0, plain)
+        for (name in ["has_space", "at_bol", "prev_end"]) {
+            t |> success(find(plain, name) < 0, "{shape}: {name}")
+        }
+    }
+    t |> equal(scanner_text("plain.das", rules, ""), scanner_text("plain_false.das", rules, "flags = false"))
+    let flagged = scanner_text("flagged.das", rules, "flags = true")
+    for (name in ["has_space", "at_bol", "prev_end", "prev_end_line"]) {
+        t |> success(find(flagged, name) >= 0, name)
     }
 }

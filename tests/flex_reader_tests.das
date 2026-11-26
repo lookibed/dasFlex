@@ -95,6 +95,13 @@ c                   {
 " "+
 %%
 
+%flex~ r_flags
+%option mode=goto flags
+%rules
+[a-z]+              { emit(lx.tok.at_bol ? 2 : 1) }
+[ \n]+
+%%
+
 //! the tokens of `src` as `kind:text` from one of the reader lexers, then the error text
 def stream(src, which : string) : array<string> {
     var lx : FlexLexer
@@ -115,6 +122,22 @@ def private reader_module(defs, rules : string) : string =>
 def test_header_enum(t : T?) {
     t |> equal(stream("ab 12", "kinds"), ["{int(RTok.WORD)}:ab", "{int(RTok.NUM)}:12", ""])
     t |> equal(stream("x 42 y", "untyped"), ["7:42", ""])
+}
+
+[test(description = "%option flags gives the tokens has_space and at_bol, and an action reads them; a reader lexer without it leaves them false")]
+def test_option_flags(t : T?) {
+    var lx : FlexLexer
+    let flagged <- lex_tokens(lx, "ab cd\n ef", $(var l : FlexLexer) => r_flags(l),
+                              $(var l : FlexLexer) => "{l.tok.kind}:{text(l)}/{flags_of(l.tok)}")
+    t |> equal(flagged, ["2:ab/b", "1:cd/s", "2:ef/sb"])
+    let plain <- lex_tokens(lx, " ab 12", $(var l : FlexLexer) => r_kinds(l), $(var l : FlexLexer) => flags_of(l.tok))
+    t |> equal(plain, ["", ""])
+}
+
+[test(description = "a reader action reading lx.tok.at_bol without %option flags fails the compile, naming the flag and %option flags")]
+def test_flag_read_needs_option(t : T?) {
+    let issues = compile_issues("no_flags.das", reader_module("", "[a-z]+  \{ emit(lx.tok.at_bol ? 2 : 1) \}\n"))
+    t |> success(find(issues, "[flex_text] the rule body reads lx.tok.at_bol but the lexer does not ask for the flags: add %option flags") >= 0, issues)
 }
 
 [test(description = "%x hides the default rules, %s keeps them, <*> and <A,B> list the conditions a rule is active in")]
@@ -258,10 +281,10 @@ def test_reader_refusals(t : T?) {
         ("options gen2\nrequire flex/flex_macro\n%flex~ bad bad\n%rules\na\n%%\n",
          "the header is `%flex~ name : TokenEnum`", 3),
         (reader_module("%option speed=fast\n", "a\n"),
-         "%option takes mode=, dispatch= and matcher=, not speed=fast", 7),
+         "%option takes mode=, dispatch=, matcher= and flags, not speed=fast", 7),
         (reader_module("D  [0-9] x\n", "a\n"), "a definition is `NAME regex`, one pattern", 7),
         (reader_module("%y C\n", "a\n"),
-         "a definition is `%x NAMES`, `%s NAMES`, `%option key=value` or `NAME regex`", 7),
+         "a definition is `%x NAMES`, `%s NAMES`, `%option key=value`, `%option flags` or `NAME regex`", 7),
         ("options gen2\nrequire flex/flex_macro\n%flex~ bad\nD  [0-9]\n%%\n",
          "the rules section starts at a line `%rules`", 5)]
     for (i, c in count(), cases) {

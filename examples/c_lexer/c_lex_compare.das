@@ -6,8 +6,8 @@ options indenting = 4
 // `daslib/regex` tried rule by rule. `--dump` prints `NAME<TAB>text<TAB>line` per token after
 // the shared filter (GNU extension skipping, adjacent string literals joined, typedef tracking)
 // so the four streams can be diffed; `--time N` lexes each file N times and prints the median.
-// `--count` (with `--time N` and `--mode flex` or `flex-inline`) times the scanner alone: the lexer is opened outside the timer and
-// the loop counts tokens, with no token array and no `text()` per token.
+// `--count` (with `--time N` and `--mode flex`, `flex-inline` or `pp`) times the scanner alone: the lexer is opened outside the
+// timer and the loop counts tokens, with no token array and no `text()` per token.
 // A HEAP line follows with the heap and string-heap allocations of that
 // loop. The token arrays of the dasFlex and probe modes keep an
 // identifier as its symbol, with no string; the regex mode builds the
@@ -17,13 +17,16 @@ options indenting = 4
 // other `flex-*` and `goto*` modes are the shapes `c_lexer_variants` and `c_lexer_goto` spell out;
 // `reader` is the same rules in the `%flex~` text form (`c_lexer_reader`). Every mode but `flex`
 // reaches its scanner through the function `c_scanner` returns, one indirect call per token more.
+// `pp` is the preprocessing-token lexer (`c_lexer_pp`): its stream is not filtered, and `--dump`
+// adds the `has_space` and `at_bol` flags of each token as two more columns.
 // The `regex` mode is ASCII + `$` + UCN escapes: `daslib/regex` has no code-point escape, so an
 // identifier holding a UTF-8 character past ASCII, or a byte order mark later than offset 0, stops it.
 //
-//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|probe|regex (--dump | --time N [--count]) files...
+//   daslang -load_module <dasFlex> examples/c_lexer/c_lex_compare.das -- --mode flex|table|flex-call|flex-dgoto|flex-dtree|goto|goto-dgoto|reader|pp|probe|regex (--dump | --time N [--count]) files...
 //   (`-- --help` lists the flags)
 
 require c_lexer
+require c_lexer_pp
 require c_lexer_variants
 require daslib/regex
 require daslib/fio
@@ -34,12 +37,14 @@ require strings
 
 //! one token: an identifier, keyword or typedef name is its symbol
 //! `sym` and its `text` stays "" until `resolve_text`; any other
-//! token is its text and `sym` -1
+//! token is its text and `sym` -1; the flags are the dasFlex lexer's
 struct Tok {
     kind : int
     text : string
     line : int
     sym : int
+    has_space : bool
+    at_bol : bool
 }
 
 //! the tokens of one file, and the symbols their `sym` fields name;
@@ -317,7 +322,7 @@ def flex_tokens(var lx : FlexLexer; scan : block<(var lx : FlexLexer) : bool>) :
     var out : array<Tok>
     while (invoke(scan, lx)) {
         out |> emplace(Tok(kind = lx.tok.kind, text = lx.tok.sym >= 0 ? "" : text(lx), line = lx.tok.line,
-                           sym = lx.tok.sym))
+                           sym = lx.tok.sym, has_space = lx.tok.has_space, at_bol = lx.tok.at_bol))
     }
     return <- out
 }
@@ -331,6 +336,8 @@ def lex_flex(text : string; typedefs : table<string; int>; shape : string) : Lex
     var res : Lexed
     if (shape == "flex" || shape == "flex-inline") {
         res.toks <- flex_tokens(lx) $(var l : FlexLexer) => c_next(l)
+    } elif (shape == "pp") {
+        res.toks <- flex_tokens(lx) $(var l : FlexLexer) => c_next_pp(l)
     } else {
         let scan = c_scanner(shape)
         res.toks <- flex_tokens(lx) $(var l : FlexLexer) => invoke(scan, l)
@@ -577,24 +584,39 @@ struct Filtered {
     typedef_count : int
 }
 
+//! the tokens of the lexer `mode` names, the identifier texts resolved
+def lex_resolved(mode : string; text : string; typedefs : table<string; int>;
+                 var rules : array<ReRule>) : Lexed {
+    var res <- lex_mode(mode, text, typedefs, rules)
+    resolve_text(res)
+    return <- res
+}
+
 //! `text` lexed by `mode` twice and filtered: the first pass learns
 //! the typedef names the second needs (the C grammar's lexer hack), so
 //! every mode sees the same table; `typedefs` gains the first pass's
-//! names
+//! names. `--mode pp` is lexed once with no filter: the preprocessing
+//! tokens as the lexer gives them
 def lex_filtered(mode : string; text : string; var typedefs : table<string; int>;
                  var rules : array<ReRule>) : Filtered {
-    var inscope first_raw <- lex_mode(mode, text, typedefs, rules)
-    resolve_text(first_raw)
+    var inscope first_raw <- lex_resolved(mode, text, typedefs, rules)
+    return <- Filtered(toks <- first_raw.toks, typedef_count = length(typedefs)) if (mode == "pp")
     var inscope first_toks <- filter_tokens(first_raw.toks, typedefs)
-    var inscope raw <- lex_mode(mode, text, typedefs, rules)
-    resolve_text(raw)
+    var inscope raw <- lex_resolved(mode, text, typedefs, rules)
     var inscope seed := typedefs
     var res = Filtered(toks <- filter_tokens(raw.toks, seed))
     res.typedef_count = length(seed)
     return <- res
 }
 
-//! a count-only scan of the default shape: the tokens and the
+//! one `--dump` row: NAME, text and line, tab-separated, and in pp mode the `has_space` and
+//! `at_bol` columns
+def dump_line(t : Tok; pp : bool) : string {
+    let row = "{c_token_name(t.kind)}\t{t.text}\t{t.line}"
+    return pp ? "{row}\t{t.has_space ? "space" : "-"}\t{t.at_bol ? "bol" : "-"}" : row
+}
+
+//! a count-only scan of the default shape or the pp lexer: the tokens and the
 //! symbols the lexer ended with, the heap and string-heap allocations
 //! of the last pass's loop, and each pass's milliseconds, sorted
 struct CountRun {
@@ -605,10 +627,10 @@ struct CountRun {
     times : array<double>
 }
 
-//! the default shape's scanner alone, `passes` times: the lexer is
-//! opened outside the timer, the loop counts tokens; the allocations
-//! are counted outside the timer
-def time_count(text : string; typedefs : table<string; int>; passes : int) : CountRun {
+//! the default shape's scanner alone, or the pp lexer's when `pp`,
+//! `passes` times: the lexer is opened outside the timer, the loop
+//! counts tokens; the allocations are counted outside the timer
+def time_count(text : string; typedefs : table<string; int>; passes : int; pp : bool = false) : CountRun {
     var run : CountRun
     run.times |> reserve(passes)
     for (_k in range(passes)) {
@@ -619,8 +641,14 @@ def time_count(text : string; typedefs : table<string; int>; passes : int) : Cou
         let heap0 = heap_allocation_count()
         let strings0 = string_heap_allocation_count()
         let t0 = ref_time_ticks()
-        while (c_next(lx)) {
-            ntok++
+        if (pp) {
+            while (c_next_pp(lx)) {
+                ntok++
+            }
+        } else {
+            while (c_next(lx)) {
+                ntok++
+            }
         }
         run.times |> push(double(get_time_usec(t0)) / 1000.0lf)
         run.heap_allocs = heap_allocation_count() - heap0
@@ -634,26 +662,33 @@ def time_count(text : string; typedefs : table<string; int>; passes : int) : Cou
 
 [CommandLineArgs]
 struct CompareArgs {
-    @clarg_doc = "the lexer: flex, table, flex-call, flex-dgoto, flex-dtree, goto, goto-dgoto, reader, probe or regex"
+    @clarg_doc = "the lexer: flex, table, flex-call, flex-dgoto, flex-dtree, goto, goto-dgoto, reader, pp, probe or regex"
     mode : string = "flex"
     @clarg_doc = "print NAME, text and line per token, tab-separated"
     dump : bool
     @clarg_doc = "lex each file N times and print the median, min and max milliseconds"
     time : int
-    @clarg_doc = "with --time and --mode flex or flex-inline: time the scanner alone, counting tokens (no token array, no text per token)"
+    @clarg_doc = "with --time and --mode flex, flex-inline or pp: time the scanner alone, counting tokens (no token array, no text per token)"
     count : bool
     @clarg_positional
     @clarg_doc = "the preprocessed C files"
     files : array<string>
 }
 
+//! `--count` asked for without `--time N`, or with a mode `time_count` does not scan
+def count_usage_error(args : CompareArgs) : bool =>
+    args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline" && args.mode != "pp"))
+
+//! the `TIME` and `HEAP` lines' tag of a `--count` run: the pp lexer's or the compiler-phase lexer's
+def count_tag(pp : bool) : string => pp ? "pp+count" : "flex+count"
+
 [export]
 def main() : int {
     var args = CompareArgs()
     let rc = parse_args_with_help(args, "c_lex_compare")
     return rc if (rc >= 0)
-    if (args.count && (args.time <= 0 || (args.mode != "flex" && args.mode != "flex-inline"))) {
-        print("usage: c_lex_compare -- --mode flex|flex-inline --time N --count files...\n")
+    if (count_usage_error(args)) {
+        print("usage: c_lex_compare -- --mode flex|flex-inline|pp --time N --count files...\n")
         return 1
     }
     var rules <- regex_rules()
@@ -668,15 +703,17 @@ def main() : int {
         var inscope filtered <- lex_filtered(args.mode, text, typedefs, rules)
         if (args.dump) {
             for (t in filtered.toks) {
-                print("{c_token_name(t.kind)}\t{t.text}\t{t.line}\n")
+                print("{dump_line(t, args.mode == "pp")}\n")
             }
         } else {
             print("{path}: {args.mode}: {length(filtered.toks)} tokens, {filtered.typedef_count} typedefs\n")
         }
         if (args.count) {
-            var inscope run <- time_count(text, typedefs, args.time)
-            print("TIME flex+count {path} median_ms={run.times[length(run.times) / 2]} min={run.times[0]} max={run.times[length(run.times) - 1]} bytes={length(text)} tokens={run.tokens}\n")
-            print("HEAP flex+count {path} tokens={run.tokens} symbols={run.symbols} heap_allocs={int64(run.heap_allocs)} string_allocs={int64(run.string_allocs)}\n")
+            let pp = args.mode == "pp"
+            var inscope run <- time_count(text, typedefs, args.time, pp)
+            let tag = count_tag(pp)
+            print("TIME {tag} {path} median_ms={run.times[length(run.times) / 2]} min={run.times[0]} max={run.times[length(run.times) - 1]} bytes={length(text)} tokens={run.tokens}\n")
+            print("HEAP {tag} {path} tokens={run.tokens} symbols={run.symbols} heap_allocs={int64(run.heap_allocs)} string_allocs={int64(run.string_allocs)}\n")
         } elif (args.time > 0) {
             var inscope times : array<double>
             times |> reserve(args.time)
