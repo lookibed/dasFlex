@@ -12,10 +12,17 @@ require daslib/debugger
 require daslib/stringify
 require daslib/strings_boost
 require strings
+require daslib/utf8_utils
 require flex/flex
 
 //! whether the test file runs under the JIT
 def tier_is_jit() : bool => is_jit_function(@@tier_is_jit)
+
+//! the UTF-8 encoding of code point `cp` as a string
+def utf8_of(cp : int) : string {
+    let bytes <- utf8_encode(uint(cp))
+    return string(bytes)
+}
 
 //! opens `lx` on `src` as the file `t.txt` and returns every token `scan` takes, each through
 //! `project`

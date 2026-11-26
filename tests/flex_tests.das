@@ -340,7 +340,6 @@ def test_symbols_table(t : T?) {
 
 require flex/flex_regex
 require flex/flex_dfa
-require daslib/utf8_utils
 
 def state_counts(rules : array<FlexRule>; ncond : int) : tuple<before : int; after : int> {
     let n <- build_nfa(rules, ncond)
@@ -439,12 +438,6 @@ def test_dot_is_one_code_point(t : T?) {
     for (word in ["\n", "ab", "é→", "\xC0\x80", "\xE2\x86", "\xF5\x80\x80\x80", "\x80"]) {
         t |> equal(whole_word_rule(tb, word), -1, word)
     }
-}
-
-//! the UTF-8 encoding of code point `cp` as a string
-def private utf8_of(cp : int) : string {
-    let bytes <- utf8_encode(uint(cp))
-    return string(bytes)
 }
 
 //! every code point of `probes` matches the one-rule tables of `pattern` iff it lies in `ranges`

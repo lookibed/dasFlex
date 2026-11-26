@@ -7,7 +7,7 @@ require daslib/rtti
 require daslib/strings_boost
 require strings
 require math
-require daslib/utf8_utils
+require _flex_test_helpers
 require ../examples/c_lexer/c_lexer.das
 require ../examples/c_lexer/c_lexer_goto.das
 require ../examples/c_lexer/c_lexer_reader.das
@@ -156,11 +156,6 @@ def private one_identifier(src : string) : bool {
     var lx : FlexLexer
     c_open(lx, src)
     return c_next(lx) && lx.tok.kind == int(CTok.IDENTIFIER) && lx.tok.len == length(src) && !c_next(lx) && !lx.failed
-}
-
-def private utf8_of(cp : int) : string {
-    let bytes <- utf8_encode(uint(cp))
-    return string(bytes)
 }
 
 [test(description = "at both ends of every Annex D.1 and D.2 range, and one past them, a code point inside an identifier and at its start lexes as one identifier exactly when C11 allows it there")]
