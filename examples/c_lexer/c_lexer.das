@@ -186,7 +186,12 @@ def c_typedef(var syms : FlexSymbols; name : string) {
 //! the identifier rule's decision on the token: the kind of its
 //! symbol, found by its bytes
 [arch(at="../../ARCHITECTURE.md#symbols")]
-def c_word_kind(var lx : FlexLexer) : int => symbol_kind(lx.syms, intern(lx))
+def c_word_kind(var lx : FlexLexer) : int {
+    if (lx.syms.fresh_kind != int(CTok.IDENTIFIER)) {
+        c_symbols(lx.syms)
+    }
+    return symbol_kind(lx.syms, intern(lx))
+}
 
 //! C11 Annex D.1: the code points past ASCII an identifier may hold, as UCNs or as UTF-8
 let C11_IDENT_RANGES = fixed_array(uint2(0xA8, 0xA8), uint2(0xAA, 0xAA), uint2(0xAD, 0xAD), uint2(0xAF, 0xAF),

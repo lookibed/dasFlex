@@ -21,7 +21,7 @@ struct FlexToken {
     line : int
     col : int
     text : string       //!< the matched text once `text()` built it; "" until then
-    sym : int           //!< the symbol `intern(lx)` found; -1 if none
+    sym : int           //!< the symbol `intern(lx)` found; -1 if none, from `flex_open` on
 }
 
 //! The scanner state.
@@ -47,6 +47,7 @@ struct FlexLexer {
 //! Open `src` for scanning: the bytes are copied once, the string may go.
 def flex_open(var lx : FlexLexer; src : string; file : string = "") {
     flex_symbols_detach(lx.syms)
+    lx.tok.sym = -1
     lx.bytes <- to_bytes(src)
     lx.len = length(lx.bytes)
     lx.data = lx.len > 0 ? unsafe(addr(lx.bytes[0])) : null

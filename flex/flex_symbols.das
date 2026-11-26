@@ -148,18 +148,23 @@ def set_symbol_kind(var syms : FlexSymbols; id, kind : int) {
 
 def symbol_count(syms : FlexSymbols) : int => length(syms.entries)
 
-//! The text of symbol `id`, built on the first call and kept.
+//! The text of symbol `id`, built on the first call and kept; the
+//! entry reads its bytes from that text from then on.
 def symbol_text(var syms : FlexSymbols; id : int) : string {
     let ent = syms.entries[id]
     if (length(syms.names) <= id) {
         syms.names |> resize(id + 1)
     }
-    if (empty(syms.names[id]) && ent.len > 0) {
-        unsafe {
-            map_to_ro_array(reinterpret<void?>(syms.src + ent.start), ent.len) $(v : array<uint8>#) {
-                syms.names[id] = slice(v, 0, ent.len)
+    if (ent.start >= 0) {
+        if (ent.len > 0) {
+            unsafe {
+                map_to_ro_array(reinterpret<void?>(syms.src + ent.start), ent.len) $(v : array<uint8>#) {
+                    syms.names[id] = slice(v, 0, ent.len)
+                }
             }
         }
+        syms.entries[id].start = -1
+        syms.in_source--
     }
     return syms.names[id]
 }
@@ -171,9 +176,7 @@ def flex_symbols_detach(var syms : FlexSymbols) {
     for (id in range(length(syms.entries))) {
         if (syms.entries[id].start >= 0) {
             symbol_text(syms, id)
-            syms.entries[id].start = -1
         }
     }
-    syms.in_source = 0
     syms.src = null
 }

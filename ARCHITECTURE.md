@@ -230,35 +230,39 @@ rather than at flex's inner `%%`.
 
 ## Symbols by their bytes {#symbols}
 
-`flex/flex_symbols.das` turns a name into a small integer without building its string.
-`FlexSymbols` is an open-addressing table - linear probing over a power-of-two number of slots,
-doubled when more than half full - of entries that hold where the name's bytes are (a span of the source,
-or a string the interner keeps), its length, a 64-bit key, a 32-bit hash and the token kind the
-name carries. A name of at most 8 bytes is its key: its bytes packed, which with the length tell
-it from every other name, so a lookup compares integers and reads no byte of either name. A longer
-name's key is its last 8 bytes, and `memcmp` confirms a match on key, hash and length. The hash
-multiplies the key - and, for a longer name, each 8-byte word before the last - by 2^64 over the
-golden ratio and keeps the high half: a name of up to 8 bytes costs one multiplication and no loop.
-A hit allocates nothing; a miss appends an entry that points into the source, copying no byte.
-`symbol_text` builds a symbol's string on its first call and keeps it, so a parser pays one string
-per distinct name it asks for, and a scan that only classifies names pays none. The interner is not
-the `SetIndex` of the table builder: that one numbers sets the builder owns as int arrays, needs a
-lookup that does not add, and runs at build time, while the interner compares borrowed byte spans on
-the scanner's hot path; nor is it `daslib/flat_hash_table`, whose keys compare by value `==`, so a
-span would have to become a string - an allocation per lookup - to be its key.
+`flex/flex_symbols.das` turns a name into a small integer without building its string. `FlexSymbols`
+is an open-addressing table - linear probing over a power-of-two number of slots, doubled when more
+than half full - of entries that hold where the name's bytes are (a span of the source, or a string
+the interner keeps), its length, a 64-bit key, a 32-bit hash and the token kind the name carries. A
+name of at most 8 bytes is its key: its bytes packed, which with the length tell it from every other
+name, so a lookup compares integers and reads no byte of either name. A longer name's key is its
+last 8 bytes, and `memcmp` confirms a match on key and length. The hash multiplies the key - and,
+for a longer name, each 8-byte word before the last - by 2^64 over the golden ratio and keeps the
+high half: a name of up to 8 bytes costs one multiplication and no loop. A hit allocates nothing; a
+miss appends an entry that points into the source, copying no byte. `symbol_text` builds a symbol's
+string on its first call and keeps it - the entry then points into that string, not the source - so
+a parser pays one string per distinct name it asks for, and a scan that only classifies names pays
+none. The interner is not the `SetIndex` of the table builder: that one numbers sets the builder
+owns as int arrays, needs a lookup that does not add, and runs at build time, while the interner
+compares borrowed byte spans on the scanner's hot path; nor is it `daslib/flat_hash_table`, whose
+keys compare by value `==`, so a span would have to become a string - an allocation per lookup - to
+be its key.
 
 A kind per symbol stands where a string-keyed table stood: the C example interns its keywords with
 their kinds before the first token (`c_symbols`), `c_typedef` turns a name into a TYPEDEF_NAME, and
 the identifier rule emits the kind of the token's symbol - one lookup for the keyword and the
-typedef question together.
+typedef question together. The rule interns the keywords itself when the interner has no IDENTIFIER
+kind for a new name yet, so a lexer opened by `flex_open` rather than `c_open` lexes the same kinds.
 
 A span is only as good as its source. An interner reads one source at a time: the first span binds
-its pointer, and a span of another source panics while any entry still points into the first.
-`flex_symbols_detach` copies the text of every span into the interner and unbinds it; the ids and
-kinds stay. `flex_open` detaches the lexer's interner before it replaces the bytes, so a lexer
-reopened on another input keeps its symbols - a name of the first file is the same id in the
-second - for one string per distinct name of the first. An interner per source would be the
-cheaper contract and would lose those ids between the files a parser lexes in turn.
+its pointer, and a span of another source panics while any entry still points into the first. The
+guard compares pointers, so a new source at the freed address of the old one passes it: the raw
+`intern` contract is to detach before the source is freed, and `FlexLexer` keeps it by detaching in
+`flex_open`. `flex_symbols_detach` copies the text of every span into the interner and unbinds it;
+the ids and kinds stay. `flex_open` detaches the lexer's interner before it replaces the bytes, so a
+lexer reopened on another input keeps its symbols - a name of the first file is the same id in the
+second - for one string per distinct name of the first. An interner per source would be the cheaper
+contract and would lose those ids between the files a parser lexes in turn.
 
 `FlexLexer.syms` is a field of the lexer, not a global, so two lexers never share symbols by
 accident. `intern(lx)` interns the current token's span and keeps the id in `tok.sym`, which every

@@ -398,6 +398,30 @@ def test_open_after_foreign_name(t : T?) {
     t |> equal(lx.tok.kind, int(CTok.IDENTIFIER))
 }
 
+//! the kind of every token c_next takes from `lx`
+def private kinds_of(var lx : FlexLexer) : array<int> {
+    var kinds : array<int>
+    while (c_next(lx)) {
+        kinds |> push(lx.tok.kind)
+    }
+    return <- kinds
+}
+
+[test(description = "c_next on a lexer opened by flex_open, not c_open, lexes keywords and names as their kinds")]
+def test_flex_open_lexes_kinds(t : T?) {
+    var lx : FlexLexer
+    flex_open(lx, "int x while")
+    t |> equal(kinds_of(lx), [int(CTok.INT), int(CTok.IDENTIFIER), int(CTok.WHILE)])
+}
+
+[test(description = "a name given TYPEDEF_NAME by set_symbol_kind before c_open keeps it, and the keywords still lex as their kinds")]
+def test_kind_set_before_open(t : T?) {
+    var lx : FlexLexer
+    set_symbol_kind(lx.syms, intern_name(lx.syms, "size_t"), int(CTok.TYPEDEF_NAME))
+    c_open(lx, "int size_t x while")
+    t |> equal(kinds_of(lx), [int(CTok.INT), int(CTok.TYPEDEF_NAME), int(CTok.IDENTIFIER), int(CTok.WHILE)])
+}
+
 [test(description = "a count-only scan builds no string, and its heap allocations follow the distinct names, not the tokens: twenty copies of a source allocate what one does")]
 def test_scan_allocates_per_name(t : T?) {
     let once = "static int count_of(const char *s, unsigned n) \{ return s[n] + 0x1f + 2.5e3f; \}\n"

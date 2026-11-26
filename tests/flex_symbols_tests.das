@@ -63,10 +63,10 @@ def test_collisions_and_growth(t : T?) {
 [test(description = "flex_symbols rounds its capacity up to a power of two; the default table and the one a first intern makes have 64 slots")]
 def test_capacity_defaults(t : T?) {
     for (asked, slots in [3, 5, 100], [4, 8, 128]) {
-        var syms <- flex_symbols(asked)
+        let syms <- flex_symbols(asked)
         t |> equal(length(syms.slots), slots, "{asked}")
     }
-    var made <- flex_symbols()
+    let made <- flex_symbols()
     t |> equal(length(made.slots), 64)
     var lazy : FlexSymbols
     intern_name(lazy, "x")
@@ -233,6 +233,24 @@ def test_source_contract(t : T?) {
     t |> equal(symbol_text(syms, three), "three")
 }
 
+[test(description = "a span starting with a zero byte is built once, and its text - all its bytes - survives flex_symbols_detach")]
+def test_zero_byte_span_text(t : T?) {
+    var bytes <- array<uint8>(0u8, uint8('a'), uint8('b'))
+    var syms : FlexSymbols
+    let id = intern(syms, unsafe(addr<uint8 const?>(bytes[0])), 0, 3)
+    symbol_text(syms, id)
+    let strings0 = string_heap_allocation_count()
+    symbol_text(syms, id)
+    t |> equal(string_heap_allocation_count(), strings0)
+    flex_symbols_detach(syms)
+    let text = symbol_text(syms, id)
+    t |> equal(string_heap_allocation_count(), strings0)
+    let p = unsafe(reinterpret<uint8 const?>(text))
+    t |> success(p != null)
+    t |> equal([for (i in range(3)); unsafe(p[i])], [0u8, uint8('a'), uint8('b')])
+    delete bytes
+}
+
 [flex]
 def interning_lexer(var lx : FlexLexer) : bool {
     rule("[a-z]+") {
@@ -254,6 +272,17 @@ def test_reopen_keeps_symbols(t : T?) {
     }
     t |> equal(second, [2, 1, 0])
     t |> equal([for (id in range(3)); symbol_text(lx.syms, id)], ["red", "green", "blue"])
+}
+
+[test(description = "tok.sym is -1 after flex_open, on a new lexer and after an input whose last token interned")]
+def test_token_sym_after_open(t : T?) {
+    var lx : FlexLexer
+    flex_open(lx, "red")
+    t |> equal(lx.tok.sym, -1)
+    t |> success(interning_lexer(lx))
+    t |> equal(lx.tok.sym, 0)
+    flex_open(lx, "blue")
+    t |> equal(lx.tok.sym, -1)
 }
 
 //! a rule that interns and rules that do not, the second reporting
