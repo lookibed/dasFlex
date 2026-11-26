@@ -5,8 +5,10 @@ module c_lexer shared public
 
 // A C11 lexer on dasFlex: the rules of the classic c11.l (Degener/Lee) as [flex] rules. Token kinds
 // above 127 are the grammar's named terminals in the yacc order; a single-character punctuator is
-// its own byte, as in yacc. Keywords are one identifier rule plus a table lookup in the action, and
-// `lx.symbols` is the typedef table the caller maintains: a name in it lexes as TYPEDEF_NAME.
+// its own byte, as in yacc. Keywords are one identifier rule plus a
+// symbol lookup in the action: `c_open` interns the keywords with
+// their kinds into `lx.syms`, `c_typedef` turns a name into a
+// TYPEDEF_NAME, and every other name lexes as IDENTIFIER.
 
 require flex/flex_macro public
 require flex/flex_regex
@@ -156,8 +158,29 @@ def c_word_kind_of(word : string; typedefs : table<string; int>) : int {
     return kind
 }
 
-//! the identifier rule's decision on the token, through the lexer's typedef table
-def c_word_kind(var lx : FlexLexer) : int => c_word_kind_of(text(lx), lx.symbols)
+//! the symbols every C source starts with, put in an empty interner:
+//! the keywords and their kinds, IDENTIFIER for a new name
+def c_symbols(var syms : FlexSymbols) {
+    return if (symbol_count(syms) > 0)
+    syms.fresh_kind = int(CTok.IDENTIFIER)
+    for (word, kind in keys(KEYWORDS), values(KEYWORDS)) {
+        set_symbol_kind(syms, intern_name(syms, word), int(kind))
+    }
+}
+
+//! `name` lexes as TYPEDEF_NAME from now on, unless it is a keyword
+def c_typedef(var syms : FlexSymbols; name : string) {
+    c_symbols(syms)
+    let id = intern_name(syms, name)
+    if (symbol_kind(syms, id) == int(CTok.IDENTIFIER)) {
+        set_symbol_kind(syms, id, int(CTok.TYPEDEF_NAME))
+    }
+}
+
+//! the identifier rule's decision on the token: the kind of its
+//! symbol, found by its bytes
+[arch(at="../../ARCHITECTURE.md#symbols")]
+def c_word_kind(var lx : FlexLexer) : int => symbol_kind(lx.syms, intern(lx))
 
 //! C11 Annex D.1: the code points past ASCII an identifier may hold, as UCNs or as UTF-8
 let C11_IDENT_RANGES = fixed_array(uint2(0xA8, 0xA8), uint2(0xAA, 0xAA), uint2(0xAD, 0xAD), uint2(0xAF, 0xAF),
@@ -238,9 +261,11 @@ def c_ident_cut(var lx : FlexLexer) : bool {
     return false
 }
 
-//! `flex_open` for C source: a UTF-8 byte order mark at offset 0 is skipped, as clang and gcc skip it
+//! `flex_open` for C source: the keywords interned (`c_symbols`), a
+//! UTF-8 byte order mark at offset 0 skipped as clang and gcc skip it
 def c_open(var lx : FlexLexer; src : string; file : string = "") {
     flex_open(lx, src, file)
+    c_symbols(lx.syms)
     if (contains_utf8_bom(lx.bytes)) {
         lx.pos = 3
         lx.col = 4

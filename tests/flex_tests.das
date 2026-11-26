@@ -328,12 +328,12 @@ def test_at_end(t : T?) {
     t |> success(flex_at_end(lx))
 }
 
-[test(description = "a rule may consult lx.symbols before deciding the kind")]
+[test(description = "a rule may consult the kind of the token's symbol in lx.syms before deciding the kind")]
 def test_symbols_table(t : T?) {
     var lx : FlexLexer
-    lx.symbols["size_t"] = 1
+    set_symbol_kind(lx.syms, intern_name(lx.syms, "size_t"), 1)
     let words <- lex_tokens(lx, "size_t n", $(var l : FlexLexer) => mini(l)) $(var l : FlexLexer) {
-        return l.symbols |> key_exists(text(l)) ? "type" : "name"
+        return symbol_kind(l.syms, intern(l)) == 1 ? "type" : "name"
     }
     t |> equal(words, ["type", "name"])
 }

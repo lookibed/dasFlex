@@ -228,13 +228,6 @@ the scanner. The text ends at the first `%%`, as every reader's does, so the for
 other tools that skip reader text skip all of it; the definitions end at the line `%rules`
 rather than at flex's inner `%%`.
 
-## The symbol table
-
-`FlexLexer.symbols : table<string; int>` is the one channel from a parser back into the lexer: a
-C parser puts `typedef` names there and the identifier rule reads it to decide between
-`IDENTIFIER` and `TYPEDEF_NAME`. It is a field of the lexer, not a global, so two lexers never share
-it by accident.
-
 ## Symbols by their bytes {#symbols}
 
 `flex/flex_symbols.das` turns a name into a small integer without building its string.
@@ -250,9 +243,10 @@ A hit allocates nothing; a miss appends an entry that points into the source, co
 `symbol_text` builds a symbol's string on its first call and keeps it, so a parser pays one string
 per distinct name it asks for, and a scan that only classifies names pays none.
 
-A kind per symbol lets one lookup answer what a string-keyed table would: a parser interns its
-keywords with their kinds before the first token and changes a name's kind when it learns one
-(`set_symbol_kind`), and a rule emits the kind of the token's symbol.
+A kind per symbol stands where a string-keyed table stood: the C example interns its keywords with
+their kinds before the first token (`c_symbols`), `c_typedef` turns a name into a TYPEDEF_NAME, and
+the identifier rule emits the kind of the token's symbol - one lookup for the keyword and the
+typedef question together.
 
 A span is only as good as its source. An interner reads one source at a time: the first span binds
 its pointer, and a span of another source panics while any entry still points into the first.

@@ -37,7 +37,6 @@ struct FlexLexer {
     emitted : bool              //!< the last rule called `emit`
     failed : bool               //!< a byte no rule accepts was met
     file : string
-    symbols : table<string; int> //!< a parser's channel back into the lexer (C `typedef` names)
     syms : FlexSymbols          //!< names by their bytes, a kind each
     err : string
     groups : array<range>       //!< the capture groups of one token, input offsets; -1 where absent

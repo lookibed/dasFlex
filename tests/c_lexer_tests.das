@@ -17,7 +17,8 @@ require ../examples/c_lexer/c_lex_compare.das
 
 // The C lexer example against the Unicode case table in examples/c_lexer/unicode_cases/cases.txt:
 // every in-scope case's input lexed by every scanner shape gives clang's token stream, and the
-// other lexers of c_lex_compare.das give the stream of the rules.
+// other lexers of c_lex_compare.das give the stream of the rules. Its identifiers: keywords and
+// typedef names as kinds of symbols, and a scan that builds no string for them.
 
 //! one token of clang's stream: its kind name and byte range
 struct CaseTok {
@@ -231,8 +232,12 @@ def test_annex_d_sets_match_tables(t : T?) {
     t |> equal(defs?["A"] ?? "", cont, "c_lexer_reader.das A")
 }
 
-//! `kind text line` per token
-def private tok_lines(toks : array<Tok>) : array<string> => [for (tk in toks); "{tk.kind} {tk.text} {tk.line}"]
+//! `kind text line` per token of a lexer, an identifier's text taken
+//! from its symbol
+def private lexed_lines(var lexed : Lexed) : array<string> {
+    resolve_text(lexed)
+    return <- [for (tk in lexed.toks); "{tk.kind} {tk.text} {tk.line}"]
+}
 
 //! whether a token of `toks` is an identifier holding a byte past 127
 def private has_utf8_identifier(toks : array<Tok>) : bool {
@@ -256,16 +261,16 @@ def test_probe_and_regex_follow_the_rules(t : T?) {
     for (c in cases) {
         let src = fread(path_join(cases_dir(), "{c.name}.c"))
         var inscope by_rules <- lex_flex(src, typedefs, "flex")
-        var inscope want <- tok_lines(by_rules.toks)
+        var inscope want <- lexed_lines(by_rules)
         errors += empty(by_rules.err) ? 0 : 1
         errors_past_line_1 += empty(by_rules.err) || starts_with(by_rules.err, "1:") ? 0 : 1
         var inscope probe <- lex_probe(src, typedefs)
-        t |> equal(tok_lines(probe.toks), want, "{c.name} (probe)")
+        t |> equal(lexed_lines(probe), want, "{c.name} (probe)")
         t |> equal(probe.err, by_rules.err, "{c.name} (probe error)")
         continue if (has_utf8_identifier(by_rules.toks))
         regex_checked++
         var inscope by_regex <- lex_regex(src, typedefs, rules)
-        t |> equal(tok_lines(by_regex.toks), want, "{c.name} (regex)")
+        t |> equal(lexed_lines(by_regex), want, "{c.name} (regex)")
         t |> equal(by_regex.err, by_rules.err, "{c.name} (regex error)")
     }
     t |> success(regex_checked >= 20, "{regex_checked} cases checked in regex mode")
@@ -337,5 +342,87 @@ def test_generated_variants_current(t : T?) {
     t |> equal([for (f in files); base_name(f.path)], ["c_lexer_goto.das", "c_lexer_variants.das"])
     for (f in files) {
         t |> equal(replace(fread(f.path), "\r\n", "\n"), replace(f.text, "\r\n", "\n"), base_name(f.path))
+    }
+}
+
+//! `kind symbol` of every token of `src`, `typedef_names` declared
+//! before the scan
+def private kinds_and_symbols(src : string; typedef_names : array<string>) : array<int2> {
+    var lx : FlexLexer
+    c_open(lx, src)
+    for (name in typedef_names) {
+        c_typedef(lx.syms, name)
+    }
+    var out : array<int2>
+    while (c_next(lx)) {
+        out |> push(int2(lx.tok.kind, lx.tok.sym))
+    }
+    return <- out
+}
+
+[test(description = "a keyword lexes as its kind, a name c_typedef declared as TYPEDEF_NAME, any other name as IDENTIFIER; one name is one symbol, and a token of no name has none")]
+def test_identifier_kinds(t : T?) {
+    let toks <- kinds_and_symbols("int size_t x; size_t x", ["size_t", "int"])
+    t |> equal([for (k in toks); k.x], [int(CTok.INT), int(CTok.TYPEDEF_NAME), int(CTok.IDENTIFIER), ';',
+                                       int(CTok.TYPEDEF_NAME), int(CTok.IDENTIFIER)])
+    t |> equal(toks[1].y, toks[4].y)
+    t |> equal(toks[2].y, toks[5].y)
+    t |> equal(toks[3].y, -1)
+    let plain <- kinds_and_symbols("while x", [])
+    t |> equal([for (k in plain); k.x], [int(CTok.WHILE), int(CTok.IDENTIFIER)])
+}
+
+[test(description = "c_typedef before c_open declares the name too, and a second c_open keeps the declaration")]
+def test_typedef_before_open(t : T?) {
+    var lx : FlexLexer
+    c_typedef(lx.syms, "T")
+    c_open(lx, "T a")
+    t |> success(c_next(lx))
+    t |> equal(lx.tok.kind, int(CTok.TYPEDEF_NAME))
+    c_open(lx, "a T while")
+    var kinds : array<int>
+    while (c_next(lx)) {
+        kinds |> push(lx.tok.kind)
+    }
+    t |> equal(kinds, [int(CTok.IDENTIFIER), int(CTok.TYPEDEF_NAME), int(CTok.WHILE)])
+}
+
+//! the heap and string-heap allocations of one count-only scan of
+//! `src`, the lexer opened before
+def private scan_allocations(src : string) : tuple<heap : uint64; strings : uint64> {
+    var lx : FlexLexer
+    c_open(lx, src)
+    let heap0 = heap_allocation_count()
+    let strings0 = string_heap_allocation_count()
+    var n = 0
+    while (c_next(lx)) {
+        n++
+    }
+    return (heap = heap_allocation_count() - heap0, strings = string_heap_allocation_count() - strings0)
+}
+
+[test(description = "a count-only scan builds no string, and its heap allocations follow the distinct names, not the tokens: twenty copies of a source allocate what one does")]
+def test_scan_allocates_per_name(t : T?) {
+    let once = "static int count_of(const char *s, unsigned n) \{ return s[n] + 0x1f + 2.5e3f; \}\n"
+    let one = scan_allocations(once)
+    t |> equal(one.strings, 0ul)
+    let many = scan_allocations(repeat(once, 20))
+    t |> equal(many.strings, 0ul)
+    t |> equal(many.heap, one.heap)
+}
+
+[test(description = "the token arrays of c_lex_compare carry an identifier as its symbol with no text until resolve_text, any other token as its text")]
+def test_compare_tokens_by_symbol(t : T?) {
+    var inscope typedefs : table<string; int>
+    typedefs["T"] = 1
+    let src = "T x = 1;"
+    var rules : array<ReRule>
+    for (mode in ["flex", "probe"]) {
+        var inscope lexed <- lex_mode(mode, src, typedefs, rules)
+        t |> equal([for (tk in lexed.toks); tk.text], ["", "", "=", "1", ";"], mode)
+        t |> success(lexed.toks[0].sym >= 0 && lexed.toks[2].sym == -1, mode)
+        resolve_text(lexed)
+        t |> equal([for (tk in lexed.toks); tk.text], ["T", "x", "=", "1", ";"], mode)
+        t |> equal(lexed.toks[0].kind, int(CTok.TYPEDEF_NAME), mode)
     }
 }

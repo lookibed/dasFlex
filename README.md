@@ -43,7 +43,10 @@ def main() {
   the tier: table mode with `matcher = "inline"` and `dispatch = "goto"` under the interpreter, goto
   mode with `dispatch = "if"` under the JIT and the exe; `mode =` alone takes the dispatch that goes
   with it (`ARCHITECTURE.md#two-shapes`).
-- `lx.symbols` is a `table<string; int>` a parser fills and a rule may consult.
+- `lx |> intern()` in a rule body is the symbol of the token: a small integer found by the token's
+  bytes, with no string built, also kept in `lx.tok.sym`. `lx.syms` carries a kind per symbol that a
+  parser sets (`set_symbol_kind`) and a rule reads (`symbol_kind`), and `symbol_text` builds a
+  symbol's string once, on request (`ARCHITECTURE.md#symbols`).
 - `lx |> group(n)` in a rule body is the text of capture group `n` of the token, `lx |> group_span(n)`
   its byte range in the input; the rule's regex runs once over the token on the first call, and only
   rules that call them pay for it (`ARCHITECTURE.md#groups`).
@@ -73,7 +76,7 @@ DIGIT   [0-9]
   `daslib/regex` - and the action: daslang code in braces, or one line without them, or nothing (a
   skip). In an action `emit(NAME)` emits a member of the header's enum, `emit(expr)` any int kind,
   `begin(NAME)` switches the condition, `group(n)` / `group_span(n)` read a capture group (a
-  definition `{NAME}` is not one), and `lx` is the lexer (`text(lx)`, `lx.symbols`).
+  definition `{NAME}` is not one), and `lx` is the lexer (`text(lx)`, `intern(lx)`, `lx.syms`).
 - Errors - a bad regex, an unknown condition or token - are reported at the rule's line.
 
 ## Speed
