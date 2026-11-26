@@ -236,36 +236,46 @@ copy and a second hash.
 
 ## Preprocessing tokens
 
-What the token flags `has_space` and `at_bol` cost the scan: before = `main` (dfe2903), after =
-`pp-tokens` (c407752), the same driver in both. After, each pass of the scanner loop - a token or a
-skipped span - runs four statements more: before the rule body the two pending flags are copied into
-the token, after it they are reset on a token (`at_bol` from the column) or raised on a skip
-(`at_bol` from the line); nothing runs per byte (`ARCHITECTURE_TOKENS.md#pp-flags`). The token array
-of `c_lex_compare.das` gains the two flags in its `Tok`, the probe's too, which leaves them unset.
-One run, alone on a quiet machine (cpu busy 1%), daslang 0.6.6; each cell is the median of 3 rounds,
-the two trees in alternating order, every round one process per tree, tier, driver and file, each
-process the median of 9 passes; JIT is `-jit -jit-no-cache`. Ms; the round range stays within 5% of
-the cell except interp token array doom_p_mobj.i before (7%) and wasm3_m3_parse.i after (12%), JIT
-count only doom_am_map.i after (55%, one round at 0.865), JIT token array before (7-17%) and
-wasm3_m3_parse.i after (7%), and the JIT probe (5-7%).
+What the token flags `has_space` and `at_bol` cost: before = `main` (dfe2903), after = `pp-tokens`
+(7425edd), where a lexer gets the flags only when it asks (`flags = true`,
+`ARCHITECTURE_TOKENS.md#pp-flags`). The plain C lexer `c_next` does not ask, and its scanner is
+before's node for node (an `options log_nodes` dump of `c_next` and of a small test lexer, interpreter
+and JIT, byte-identical to main's); the pp lexer `c_next_pp` asks, and for its cost it is timed
+against the same tree with `[flex]` in place of `[flex(flags = true)]` (after, no flags). Its flags
+are two compares and two stores at the head of every rule body that is not empty and two stores per
+emitted token; an empty skipping body - whitespace, a line comment, the inside of a block comment -
+runs nothing for them. The token array of `c_lex_compare.das` carries the two flags in its `Tok` in
+the after tree, the probe's too, which leaves them unset. One run, alone on a quiet machine (cpu busy
+1%), daslang 0.6.6; each cell is the median of 3 rounds, the trees in alternating order, every round
+one process per tree, tier, driver and file, each process the median of 9 passes; JIT is `-jit
+-jit-no-cache`. Ms; the round range stays within 5% of the cell except JIT count only doom_am_map.i
+and doom_p_mobj.i after (7%), JIT token array doom_am_map.i before (10%) and wasm3_m3_parse.i (7%
+before, 11% after), interp probe wasm3_m3_parse.i after (6%), and JIT pp doom_am_map.i with the flags
+(7%).
 
 | driver | interp before | interp after | jit before | jit after |
 |---|---|---|---|---|
-| dasFlex, count only (`--mode flex --count`), doom_am_map.i | 9.872 | 10.734 (+9%) | 0.528 | 0.563 (+7%) |
-| dasFlex, count only, doom_p_mobj.i | 8.805 | 9.452 (+7%) | 0.459 | 0.471 (+3%) |
-| dasFlex, count only, wasm3_m3_parse.i | 9.833 | 10.700 (+9%) | 0.501 | 0.529 (+6%) |
-| dasFlex, token array (`--mode flex`), doom_am_map.i | 11.614 | 12.725 (+10%) | 0.772 | 0.846 (+10%) |
-| dasFlex, token array, doom_p_mobj.i | 10.448 | 10.871 (+4%) | 0.655 | 0.658 (0%) |
-| dasFlex, token array, wasm3_m3_parse.i | 12.007 | 12.600 (+5%) | 0.737 | 0.814 (+10%) |
-| hand-written lexer (`--mode probe`), doom_am_map.i | 9.680 | 9.795 (+1%) | 1.112 | 1.147 (+3%) |
-| hand-written lexer, doom_p_mobj.i | 7.975 | 8.149 (+2%) | 0.876 | 0.861 (-2%) |
-| hand-written lexer, wasm3_m3_parse.i | 9.067 | 9.418 (+4%) | 1.047 | 1.079 (+3%) |
+| dasFlex, count only (`--mode flex --count`), doom_am_map.i | 11.696 | 11.810 (+1%) | 0.536 | 0.537 (0%) |
+| dasFlex, count only, doom_p_mobj.i | 10.233 | 10.230 (0%) | 0.467 | 0.469 (0%) |
+| dasFlex, count only, wasm3_m3_parse.i | 11.541 | 11.584 (0%) | 0.497 | 0.506 (+2%) |
+| dasFlex, token array (`--mode flex`), doom_am_map.i | 13.835 | 13.595 (-2%) | 0.767 | 0.807 (+5%) |
+| dasFlex, token array, doom_p_mobj.i | 11.747 | 11.633 (-1%) | 0.623 | 0.668 (+7%) |
+| dasFlex, token array, wasm3_m3_parse.i | 13.286 | 13.484 (+1%) | 0.738 | 0.762 (+3%) |
+| hand-written lexer (`--mode probe`), doom_am_map.i | 9.446 | 9.622 (+2%) | 1.133 | 1.117 (-1%) |
+| hand-written lexer, doom_p_mobj.i | 8.072 | 7.973 (-1%) | 0.867 | 0.871 (0%) |
+| hand-written lexer, wasm3_m3_parse.i | 9.173 | 9.818 (+7%) | 1.070 | 1.049 (-2%) |
 
-The flags are not free: the count-only scan takes 7-9% longer in the interpreter and 3-7% longer
-under the JIT, the after tree slower in every round on every file in both tiers, while the
-hand-written probe, whose scanner did not change, moves -2 to +4%. The interpreter pays per statement
-node, and the loop runs once per token and once per skipped span, so four statements show against a
-loop body this short; the token-array rows carry the same cost plus the two fields per `Tok`.
+| pp lexer, count only (`--mode pp --count`) | interp no flags | interp flags | jit no flags | jit flags |
+|---|---|---|---|---|
+| doom_am_map.i | 11.787 | 12.051 (+2%) | 0.565 | 0.592 (+5%) |
+| doom_p_mobj.i | 10.213 | 10.529 (+3%) | 0.493 | 0.498 (+1%) |
+| wasm3_m3_parse.i | 11.549 | 11.870 (+3%) | 0.529 | 0.535 (+1%) |
+
+A lexer that does not ask pays nothing: the count-only scan of `c_next` moves 0 to +2%, inside the
+spread of the hand-written probe, whose scanner did not change either (-2 to +7%). The token-array
+rows under the JIT, +3 to +7%, are the driver's: its `Tok` copies the two flags per token, which the
+before tree's `Tok` does not have. The pp lexer pays 2-3% in the interpreter and 1-5% under the JIT
+for its flags, slower with them in every round on every file in both tiers.
 
 ## What the JIT IR says (LLVM 22, `--jit-dump`)
 - the rule dispatch is already a `switch` in both shapes, so the dispatch step is an interpreter step only;

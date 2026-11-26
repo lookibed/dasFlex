@@ -50,14 +50,16 @@ def main() {
 - `lx |> group(n)` in a rule body is the text of capture group `n` of the token, `lx |> group_span(n)`
   its byte range in the input; the rule's regex runs once over the token on the first call, and only
   rules that call them pay for it (`ARCHITECTURE.md#groups`).
-- Every token carries the two flags a C preprocessor reads: `lx.tok.has_space`, set when skipped
-  text - whitespace, a comment, any rule that did not emit - came before it, and `lx.tok.at_bol`,
-  set for the first token of the input and for a token a newline separates from the previous one -
-  in skipped text, or ending that token; the token right after a multi-line token, such as a string
-  of a language that allows one, shares its last line and is not `at_bol`. They are set before the
-  rule body runs, so a body may read them, and cost no work per byte. The C example keeps a block
-  comment one space, as C11 phase 3 has it: a newline inside the comment does not set `at_bol`.
-  Unlike chibicc, `has_space` stays set across a newline, as gcc and clang keep it.
+- `[flex(flags = true)]` (`%option flags` in the reader) gives every token the two flags a C
+  preprocessor reads: `lx.tok.has_space`, set when skipped text - whitespace, a comment, any rule
+  that did not emit - came before it, and `lx.tok.at_bol`, set for the first token of the input and
+  for a token a newline separates from the previous one - in skipped text, or ending that token; the
+  token right after a multi-line token, such as a string of a language that allows one, shares its
+  last line and is not `at_bol`. They are set before a rule body runs, so the body may read them,
+  and cost no work per byte and none for a skipping rule with an empty body; a lexer that does not
+  ask leaves them false and pays nothing (`ARCHITECTURE_TOKENS.md#pp-flags`). The C pp lexer keeps a
+  block comment one space, as C11 phase 3 has it: a newline inside the comment does not set
+  `at_bol`. Unlike chibicc, `has_space` stays set across a newline, as gcc and clang keep it.
   `examples/c_lexer/c_lexer_pp.das` is the C11 lexer as preprocessing tokens
   (`ARCHITECTURE_TOKENS.md#pp-tokens`): one pp-number rule, `#`/`##` punctuators, every identifier
   an IDENTIFIER, and any other character a PP_OTHER token. Its input has had its backslash-newline
@@ -83,7 +85,7 @@ DIGIT   [0-9]
 
 - The header names the function and, after `:`, the token enum; `%x` / `%s` declare exclusive and
   inclusive start conditions, `NAME regex` a definition `{NAME}` expands, `%option mode=goto` (and
-  `dispatch=`, `matcher=`) the shape; `%rules` starts the rules and the first `%%` ends the text.
+  `dispatch=`, `matcher=`) the shape, `%option flags` the token flags; `%rules` starts the rules and the first `%%` ends the text.
 - A rule is `<COND,...>` or `<*>` (optional), the pattern - `"..."` literal, the rest
   `daslib/regex` - and the action: daslang code in braces, or one line without them, or nothing (a
   skip). In an action `emit(NAME)` emits a member of the header's enum, `emit(expr)` any int kind,
@@ -116,10 +118,10 @@ chibicc's `tokenize()` does work the dasFlex rows do not: it allocates a token p
 lookup. Against `fast` the count-only JIT row takes 2.49-2.74x less time, the token-array JIT row
 1.71-1.80x less. The table was taken with the C lexer's ASCII rules; what its Unicode rules cost
 is the ledger's "Unicode in the C lexer". The timed C lexer (`c_next`) skips a `#` line, where chibicc
-makes `#` and `##` tokens (`c_lexer_pp.das` makes them too), and the table predates the
-`has_space` / `at_bol` flags every token now carries: they take the count-only scan 7-9% longer in
-the interpreter and 3-7% under the JIT, four statements per token or skipped span and nothing per
-byte (ledger: "Preprocessing tokens"). Method and the step-by-step history: `PERF_LEDGER.md`.
+makes `#` and `##` tokens (`c_lexer_pp.das` makes them too), and the `has_space` / `at_bol`
+flags cost a lexer that does not ask for them nothing - its scanner is the one without them, node
+for node - and take the pp lexer's count-only scan 2-3% longer in the interpreter and 1-5% under the
+JIT (ledger: "Preprocessing tokens"). Method and the step-by-step history: `PERF_LEDGER.md`.
 
 The table predates identifiers as symbols: the identifier rule now interns the token's bytes and
 emits its symbol's kind, so neither the scan nor the token array builds a string per identifier

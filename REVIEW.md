@@ -42,8 +42,15 @@ match - a pass for line and column - is a defect** - they count newlines on the 
 (`ARCHITECTURE.md#two-shapes`).
 
 **A diff that makes the token flags cost work per byte - a pass over the token or the skipped text
-to find a newline or a space - is a defect** - the line and column the take wrote already answer
-(`ARCHITECTURE_TOKENS.md#pp-flags`).
+to find a newline or a space - or work in a rule whose body is empty, is a defect** - the previous
+token's end and the line the take wrote already answer (`ARCHITECTURE_TOKENS.md#pp-flags`).
+
+**A diff that makes the scanner of a lexer that does not ask for the token flags (`flags = true`,
+`%option flags`) differ from the scanner without them - a flag, `prev_end` or `prev_end_line`
+written or read - or that moves a field the scanner reads in `FlexToken` or `FlexLexer`, is a
+defect** - a lexer pays for the flags only when it asks (`ARCHITECTURE_TOKENS.md#pp-flags`);
+`tests/flex_tests.das` checks the generated body, and an `options log_nodes` dump of `c_next` diffed
+against the base branch is the proof for a change to the scanner emission.
 
 **A diff that allocates a string in the generated scanner loop before a rule body asks for one
 (`text`) is a defect** - the match is a span; the string is on request.

@@ -5,7 +5,7 @@ pure daslang lexer generator: rules written as regular expressions inside a `[fl
 compiled at compile time into one deterministic automaton per rule set, and the function becomes the
 scanner that drives it. It depends on `daslib/regex` for parsing regex text and on nothing under
 `modules/`. The symbol interner's mechanism is in the companion `ARCHITECTURE_SYMBOLS.md`; the two
-flags every token carries for a preprocessor are in the companion `ARCHITECTURE_TOKENS.md`.
+flags a lexer may ask for on every token, for a preprocessor, are in the companion `ARCHITECTURE_TOKENS.md`.
 
 ## File charters
 
@@ -35,7 +35,7 @@ flags every token carries for a preprocessor are in the companion `ARCHITECTURE_
   `[flex_text]` function (`flex_reader_source`). Text in, text out; no regex, no tables.
 - `examples/c_lexer/` - the C11 lexer on dasFlex (`c_lexer.das`), the same rules under the other
   scanner shapes (`c_lexer_goto.das`, `c_lexer_variants.das`) and as preprocessing tokens - one
-  pp-number rule, `#` and `##` punctuators - (`c_lexer_pp.das`), all three written by
+  pp-number rule, `#` and `##` punctuators, the token flags - (`c_lexer_pp.das`), all three written by
   `gen_variants.das`; the same rules in `%flex~` form (`c_lexer_reader.das`), a demo, the comparison and timing driver, and
   the Unicode case table (`unicode_cases/`: inputs and the token streams clang lexes from them).
 - `tests/` - the package's dastest tests.
