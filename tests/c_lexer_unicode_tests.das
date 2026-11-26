@@ -12,6 +12,7 @@ require ../examples/c_lexer/c_lexer.das
 require ../examples/c_lexer/c_lexer_variants.das
 require ../examples/c_lexer/c_lexer_goto.das
 require ../examples/c_lexer/c_lexer_reader.das
+require ../examples/c_lexer/gen_variants.das
 require ../examples/c_lexer/c_lex_compare.das
 
 // The C lexer example against the Unicode case table in examples/c_lexer/unicode_cases/cases.txt:
@@ -328,4 +329,13 @@ def test_columns_after_cut_and_bom(t : T?) {
     c_open(custom, "ab\xC3\x97")
     t |> success(cut_text_lexer(custom), "the custom rule's identifier cut before U+00D7")
     t |> equal(cut_texts, ["ab\xC3\x97", "ab"])
+}
+
+[test(description = "gen_variants.das over the rules of c_next writes exactly the checked-in c_lexer_goto.das and c_lexer_variants.das, line ends aside")]
+def test_generated_variants_current(t : T?) {
+    let files <- generated_files(dir_name(example_path("c_lexer.das")))
+    t |> equal([for (f in files); base_name(f.path)], ["c_lexer_goto.das", "c_lexer_variants.das"])
+    for (f in files) {
+        t |> equal(replace(fread(f.path), "\r\n", "\n"), replace(f.text, "\r\n", "\n"), base_name(f.path))
+    }
 }

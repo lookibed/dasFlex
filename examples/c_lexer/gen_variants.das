@@ -98,23 +98,35 @@ def file_text(target : Target; rules : string; scanners : array<Variant>) : stri
     }
 }
 
-[export]
-def main() : int {
-    let here = dir_name(string(get_line_info().fileInfo.name))
-    let dir = empty(here) ? "." : here
+//! one generated file: its path and the text it is to hold
+struct Generated {
+    path : string
+    text : string
+}
+
+//! every generated file under `dir`, from the rules of `c_next` in `dir/c_lexer.das`; empty when
+//! that file holds no `def c_next(`
+def generated_files(dir : string) : array<Generated> {
     let rules = rule_lines(fread(path_join(dir, "c_lexer.das")))
-    if (empty(rules)) {
-        print("{dir}/c_lexer.das: no `def c_next(` found\n")
-        return 1
-    }
     let all <- targets()
     var scanners <- [Variant(name = "c_next", mode = "flex"), Variant(name = "c_next_reader", mode = "reader")]
     for (target in all) {
         scanners |> push_clone_from(target.variants)
     }
-    for (target in all) {
-        let path = path_join(dir, target.file)
-        print("{path}: {fwrite_if_changed(path, file_text(target, rules, scanners)) ? "written" : "unchanged"}\n")
+    return <- [for (target in all); Generated(path = path_join(dir, target.file), text = file_text(target, rules, scanners)); where !empty(rules)]
+}
+
+[export]
+def main() : int {
+    let here = dir_name(string(get_line_info().fileInfo.name))
+    let dir = empty(here) ? "." : here
+    let files <- generated_files(dir)
+    if (empty(files)) {
+        print("{dir}/c_lexer.das: no `def c_next(` found\n")
+        return 1
+    }
+    for (f in files) {
+        print("{f.path}: {fwrite_if_changed(f.path, f.text) ? "written" : "unchanged"}\n")
     }
     return 0
 }
