@@ -36,6 +36,9 @@ def lex_tokens(var lx : FlexLexer; src : string; scan : block<(var lx : FlexLexe
     return <- out
 }
 
+//! the token's flags: `s` for `has_space`, `b` for `at_bol`
+def flags_of(lx : FlexLexer) : string => "{lx.tok.has_space ? "s" : ""}{lx.tok.at_bol ? "b" : ""}"
+
 //! compiles `text` as the virtual file `name` - for the JIT tier's choices when `jit_policy`,
 //! JIT-compiled when `jit` - and hands a program that compiled to `blk`: "" when it compiled and
 //! `blk` returned "", else the compile issues or what `blk` returned
@@ -65,8 +68,8 @@ def compile_issues(name, text : string; jit_policy : bool = false) : string =>
     compile_virtual(name, text, jit_policy, false) $(_program) => ""
 
 //! the scanner driver of a stamped module: `run(shape, src, out)` lexes `src` with lexer `lex<shape>`
-//! and writes `kind@line:col:text` per token, the error text, then what the rule bodies pushed to
-//! `rule_log`, joined by `\x1F`
+//! and writes `kind@line:col/flags:text` per token - `flags` as `flags_of` writes them - the error
+//! text, then what the rule bodies pushed to `rule_log`, joined by `\x1F`
 let private STAMP_RUN = %stringify~
 var private rule_log : array<string>
 [export]
@@ -76,7 +79,8 @@ def run(shape : int; src : string; var out : string?) {
     flex_open(lx, src, "t.txt")
     var toks : array<string>
     while (lex_by(shape, lx)) {
-        toks |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}:{text(lx)}")
+        let flags = "{lx.tok.has_space ? "s" : ""}{lx.tok.at_bol ? "b" : ""}"
+        toks |> push("{lx.tok.kind}@{lx.tok.line}:{lx.tok.col}/{flags}:{text(lx)}")
     }
     toks |> push(lx.err)
     toks |> push_from(rule_log)

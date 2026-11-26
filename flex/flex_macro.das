@@ -657,9 +657,17 @@ def private make_scanner_body(spec : FlexSpec; g : TableGlobals; t : FlexTables;
                 return false
             }
             $b(take)
+            $i(lx).tok.has_space = $i(lx).space_pending
+            $i(lx).tok.at_bol = $i(lx).bol_pending
             $i(lx).emitted = false
             $b(arms)
-            return true if ($i(lx).emitted)
+            if ($i(lx).emitted) {
+                $i(lx).space_pending = false
+                $i(lx).bol_pending = $i(lx).col == 1
+                return true
+            }
+            $i(lx).space_pending = true
+            $i(lx).bol_pending ||= $i(lx).line != $i(lx).tok.line
         }
     }
     var top = (newBody as ExprBlock).list[0]
